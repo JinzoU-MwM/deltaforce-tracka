@@ -395,3 +395,14 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
   (`SyncMenu`), menu D2D lama dimatikan.
 - INSERT = hide/show menu. Klik menu untuk fokus.
 - Runbook: `run_v20.bat` (menu ImGui + overlay19).
+
+## 24. Overlay ImGui penuh (ESP + menu) + kalibrasi
+- `overlay_imgui.cpp` -> `dfimgui_overlay.exe`: satu proses ImGui, layered full-screen
+  (D3D11 -> staging -> DIB -> UpdateLayeredWindow). Menggantikan dfoverlay19 + menu_imgui.
+- ESP/chams digambar via ImDrawList (AddRect/AddText/AddConvexPolyFilled/AddLine/AddCircle).
+- Hotkey: RegisterHotKey + WH_KEYBOARD_LL untuk INSERT (toggle menu).
+  Saat menu buka: WS_EX_TRANSPARENT dilepas, ShowCursor(TRUE), SetForegroundWindow.
+- Kalibrasi akurasi: F9 / tombol "Calibrate" -> ambil target terdekat crosshair,
+  hitung dyaw/dpitch dari proyeksi, set g_yawOff/g_pitchOff. Slider Cam Z/Cam Fwd/
+  FOV adj/Yaw/Pitch untuk tuning manual.
+- Runbook: `run_v21.bat`.

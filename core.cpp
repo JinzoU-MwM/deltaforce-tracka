@@ -636,6 +636,51 @@ static void DumpCam(uintptr_t pc, uintptr_t cam, uintptr_t pawn) {
         float v = R<float>(cam + o);
         fprintf(f, "  RAW 0x%X %08X f=%.3f\n", o, *(uint32_t*)&v, v);
     }
+    {
+        uintptr_t tc = DPtr(R<uint64_t>(cam + 0x378));
+        char tcn[104] = {0}; ClassNameToBuf(tc, tcn, 104);
+        float qx=R<float>(tc+0x210), qy=R<float>(tc+0x214), qz=R<float>(tc+0x218), qw=R<float>(tc+0x21C);
+        float tx=R<float>(tc+0x220), ty=R<float>(tc+0x224), tz=R<float>(tc+0x228);
+        fprintf(f, "CAMTC p=%p class=%s t=(%.1f,%.1f,%.1f) q=(%.3f,%.3f,%.3f,%.3f)\n",
+                (void*)tc, tcn, tx, ty, tz, qx, qy, qz, qw);
+        uintptr_t pcown = DPtr(R<uint64_t>(cam + 0x370));
+        char pcn[104] = {0}; ClassNameToBuf(pcown, pcn, 104);
+        fprintf(f, "CAMPC p=%p class=%s\n", (void*)pcown, pcn);
+    }
+    {
+        fprintf(f, "LOCROT scan\n");
+        int n = 0;
+        for (uint32_t o = 0; o + 0x20 <= 0x80000; o += 4) {
+            float lx = R<float>(cam + o), ly = R<float>(cam + o + 4), lz = R<float>(cam + o + 8);
+            float pitch = R<float>(cam + o + 0xC), yaw = R<float>(cam + o + 0x10), roll = R<float>(cam + o + 0x14);
+            if (!((lx==lx)&&(ly==ly)&&(lz==lz)&&(pitch==pitch)&&(yaw==yaw))) continue;
+            if (!(fabsf(pitch) <= 89.f && yaw >= 0.f && yaw <= 360.f)) continue;
+            float dx = lx - pp.x, dy = ly - pp.y, dz = lz - pp.z;
+            float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+            if (dist > 1500.f) continue;
+            float dyaw = fabsf(yaw - ctrl.yaw); if (dyaw > 180.f) dyaw = 360.f - dyaw;
+            float dp = fabsf(pitch - ctrl.pitch);
+            if (dyaw > 15.f || dp > 15.f) continue;
+            fprintf(f, "  LR off=0x%X dist=%.1f loc=(%.1f,%.1f,%.1f) rot=(%.2f,%.2f,%.2f) dyaw=%.2f dp=%.2f\n",
+                    o, dist, lx, ly, lz, pitch, yaw, roll, dyaw, dp);
+            if (++n >= 25) break;
+        }
+    }
+    uint32_t bases[3] = { 0x2E360, 0x2F7A0, 0x3E0 };
+    for (int bi = 0; bi < 3; ++bi) {
+        uint32_t base = bases[bi];
+        fprintf(f, "VT base=0x%X\n", base);
+        for (uint32_t i = 0; i < 0x80; i += 4) {
+            float v = R<float>(cam + base + i);
+            if (v != 0.f && v == v && fabsf(v) < 1e6f)
+                fprintf(f, "  f 0x%X=%.2f\n", i, v);
+        }
+        for (uint32_t i = 0; i < 0x80; i += 8) {
+            double d = R<double>(cam + base + i);
+            if (d != 0.0 && d == d && fabs(d) < 1e6)
+                fprintf(f, "  d 0x%X=%.2f\n", i, d);
+        }
+    }
     struct Cand { float score, dist, fov, pitch, yaw, lx, ly, lz; uint32_t off; };
     Cand best[12] = {};
     int nb = 0;
