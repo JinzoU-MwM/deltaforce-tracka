@@ -377,12 +377,12 @@ static void DrawFrame(SharedState st, int W, int H) {
             V3 head{ p.pos.x, p.pos.y, p.pos.z + 72.f };
             if (!W2S(st, feet, fx, fy, W, H)) continue;
             if (!W2S(st, head, hx, hy, W, H)) continue;
-            if (!g_esp) continue;
+            if (!g_esp && !g_body) continue;
             float h = fy > hy ? fy - hy : hy - fy;
             if (h > H) continue;
             float bw = h * 0.45f;
             D2D1::ColorF col = (st.localCamp >= 0 && p.camp >= 0 && p.camp != st.localCamp) ? D2D1::ColorF(1.f, 0.25f, 0.25f) : D2D1::ColorF(0.2f, 0.8f, 1.f);
-            if (h < 4.f) { Rect(hx - 2.f, hy - 2.f, 4.f, 4.f, col, 1.f); continue; }
+            if (h < 4.f) { if (g_esp) Rect(hx - 2.f, hy - 2.f, 4.f, 4.f, col, 1.f); continue; }
             if (g_body) {
                 if (p.boneCount >= 4) {
                     float sx[16], sy[16]; bool okb[16];
@@ -405,6 +405,7 @@ static void DrawFrame(SharedState st, int W, int H) {
                     Circle(hx, hy, (h * 0.06f > 3.f ? h * 0.06f : 3.f), col, 1.2f);
                 }
             }
+            if (!g_esp) continue;
             if (g_boxes) Rect(fx - bw * 0.5f, hy, bw, h, col, 1.6f);
             if (g_names) Text(fx - bw * 0.5f, hy - 15.f, p.name, col, 12.f);
             if (g_dist) { char b[32]; wsprintfA(b, "%dm", (int)p.dist); Text(fx - bw * 0.5f, hy - 1.f, b, D2D1::ColorF(0.9f, 0.9f, 0.6f), 11.f); }

@@ -357,3 +357,9 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
   target itu memang di balik pintu/tembok -> wallhack skeleton melalui dinding.
 - Mannequin putih di balik pagar bukan target tracked (prop statis / bukan
   BP_RangeTargetCharacter di list).
+
+## 19. V18b: body independen dari ESP
+- Sebelumnya `if (!g_esp) continue;` mematikan body juga.
+- Sekarang: `if (!g_esp && !g_body) continue;`; body digambar dulu, baru box/name/dist
+  hanya jika g_esp. Toggle `esp 0` + `body 1` = wallhack body saja.
+- Runbook: `run_v18.bat`.
