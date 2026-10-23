@@ -370,3 +370,11 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
 - Di training gameplay dead=0; screenshot terakhir menunjukkan beberapa skeleton cyan
   di target jarak jauh (Target 58m) — body wallhack bekerja di gameplay.
 - Runbook final: `run_v19.bat` (core19 + overlay19).
+
+## 21. Body render: silhouette proporsional (ganti stick skeleton)
+- Skeleton 16-bone dari z-fraction bentuknya jelek (torso jadi segitiga) karena bone
+  selection noise. Diganti silhouette proporsional tetap:
+  head circle, torso trapesium (shoulder 0.17h, hip 0.115h), tangan 2 segmen,
+  kaki 2 segmen; titik head dari bone0, feet dari bone14; fallback pos+72.
+- Warna: musuh merah, kawan cyan, target netral kuning; fill alpha 0.30 + outline.
+- `body 1` = silhouette ini (tembus dinding).

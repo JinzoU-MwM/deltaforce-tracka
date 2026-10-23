@@ -124,6 +124,30 @@ static void Circle(float x, float y, float r, D2D1::ColorF col, float t) {
     g_brush->SetColor(col);
     g_rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x, y), r, r), g_brush, t);
 }
+static void FillCircle(float x, float y, float r, D2D1::ColorF col) {
+    if (!g_rt || !g_brush) return;
+    g_brush->SetColor(col);
+    g_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, y), r, r), g_brush);
+}
+static void Thick(float x1, float y1, float x2, float y2, D2D1::ColorF col, float t) {
+    if (!g_rt || !g_brush) return;
+    g_brush->SetColor(col);
+    g_rt->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), g_brush, t);
+}
+static void FillPoly(const D2D1_POINT_2F* pts, int n, D2D1::ColorF col) {
+    if (!g_rt || !g_brush || !g_factory || n < 3) return;
+    ID2D1PathGeometry* geo = nullptr;
+    if (FAILED(g_factory->CreatePathGeometry(&geo)) || !geo) return;
+    ID2D1GeometrySink* sink = nullptr;
+    if (FAILED(geo->Open(&sink)) || !sink) { geo->Release(); return; }
+    sink->BeginFigure(pts[0], D2D1_FIGURE_BEGIN_FILLED);
+    for (int i = 1; i < n; ++i) sink->AddLine(pts[i]);
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    g_brush->SetColor(col);
+    g_rt->FillGeometry(geo, g_brush);
+    sink->Release(); geo->Release();
+}
 
 static bool InitD2D() {
     if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_factory))) return false;
@@ -384,25 +408,44 @@ static void DrawFrame(SharedState st, int W, int H) {
             D2D1::ColorF col = (st.localCamp >= 0 && p.camp >= 0 && p.camp != st.localCamp) ? D2D1::ColorF(1.f, 0.25f, 0.25f) : D2D1::ColorF(0.2f, 0.8f, 1.f);
             if (h < 4.f) { if (g_esp) Rect(hx - 2.f, hy - 2.f, 4.f, 4.f, col, 1.f); continue; }
             if (g_body) {
-                if (p.boneCount >= 4) {
-                    float sx[16], sy[16]; bool okb[16];
-                    for (int bi = 0; bi < 16 && bi < p.boneCount; ++bi) {
-                        V3 b{ p.bones[bi].x, p.bones[bi].y, p.bones[bi].z };
-                        okb[bi] = W2S(st, b, sx[bi], sy[bi], W, H);
+                float sxh, syh, sxf, syf;
+                bool okh = false, okf = false;
+                if (p.boneCount >= 15) {
+                    V3 hb{ p.bones[0].x, p.bones[0].y, p.bones[0].z };
+                    V3 fb{ p.bones[14].x, p.bones[14].y, p.bones[14].z };
+                    okh = W2S(st, hb, sxh, syh, W, H);
+                    okf = W2S(st, fb, sxf, syf, W, H);
+                }
+                if (!okh || !okf) { sxh = hx; syh = hy; sxf = fx; syf = fy; okh = okf = true; }
+                if (okh && okf) {
+                    float hh = fabsf(syf - syh);
+                    if (hh > 6.f) {
+                        float mx = (sxh + sxf) * 0.5f;
+                        bool en = (st.localCamp >= 0 && p.camp >= 0 && p.camp != st.localCamp);
+                        bool neu = (p.camp < 0);
+                        D2D1::ColorF fill = en ? D2D1::ColorF(1.f, 0.16f, 0.16f, 0.30f) : (neu ? D2D1::ColorF(0.95f, 0.9f, 0.2f, 0.30f) : D2D1::ColorF(0.2f, 0.8f, 1.f, 0.30f));
+                        D2D1::ColorF out  = en ? D2D1::ColorF(1.f, 0.32f, 0.32f, 0.95f) : (neu ? D2D1::ColorF(1.f, 0.95f, 0.25f, 0.95f) : D2D1::ColorF(0.3f, 0.9f, 1.f, 0.95f));
+                        float ySh = syh + hh * 0.17f, yHip = syh + hh * 0.55f;
+                        float wSh = hh * 0.17f, wHip = hh * 0.115f;
+                        D2D1_POINT_2F torso[4] = { {mx - wSh, ySh}, {mx + wSh, ySh}, {mx + wHip, yHip}, {mx - wHip, yHip} };
+                        FillPoly(torso, 4, fill);
+                        for (int i = 0; i < 4; ++i) { int j = (i + 1) & 3; Line(torso[i].x, torso[i].y, torso[j].x, torso[j].y, out, 1.2f); }
+                        float hr = hh * 0.062f; if (hr < 2.2f) hr = 2.2f; if (hr > 22.f) hr = 22.f;
+                        FillCircle(sxh, syh, hr, fill);
+                        Circle(sxh, syh, hr, out, 1.3f);
+                        float lt = hh * 0.045f; if (lt < 1.5f) lt = 1.5f; if (lt > 14.f) lt = 14.f;
+                        float yElb = syh + hh * 0.36f, yHand = syh + hh * 0.60f;
+                        Thick(mx - wSh * 0.9f, ySh, mx - wSh - hh * 0.05f, yElb, fill, lt);
+                        Thick(mx - wSh - hh * 0.05f, yElb, mx - wSh - hh * 0.02f, yHand, fill, lt);
+                        Thick(mx + wSh * 0.9f, ySh, mx + wSh + hh * 0.05f, yElb, fill, lt);
+                        Thick(mx + wSh + hh * 0.05f, yElb, mx + wSh + hh * 0.02f, yHand, fill, lt);
+                        float lg = hh * 0.055f; if (lg < 1.7f) lg = 1.7f; if (lg > 16.f) lg = 16.f;
+                        float yKnee = syh + hh * 0.78f;
+                        Thick(mx - wHip * 0.55f, yHip, mx - wHip * 0.65f, yKnee, fill, lg);
+                        Thick(mx - wHip * 0.65f, yKnee, sxf, syf, fill, lg);
+                        Thick(mx + wHip * 0.55f, yHip, mx + wHip * 0.65f, yKnee, fill, lg);
+                        Thick(mx + wHip * 0.65f, yKnee, sxf, syf, fill, lg);
                     }
-                    int pairs[][2] = { {0,1},{1,2},{2,3},{2,4},{4,6},{6,8},{2,5},{5,7},{7,9},{3,10},{10,12},{12,14},{3,11},{11,13},{13,15} };
-                    for (int pi = 0; pi < 15; ++pi) {
-                        int a1 = pairs[pi][0], b1 = pairs[pi][1];
-                        if (a1 < p.boneCount && b1 < p.boneCount && okb[a1] && okb[b1])
-                            Line(sx[a1], sy[a1], sx[b1], sy[b1], col, 1.4f);
-                    }
-                    if (okb[0]) Circle(sx[0], sy[0], (h * 0.06f > 3.f ? h * 0.06f : 3.f), col, 1.4f);
-                } else {
-                    float mx = (fx + hx) * 0.5f;
-                    Line(fx, fy, hx, hy, col, 1.2f);
-                    Line(hx - bw * 0.5f, hy + h * 0.22f, hx + bw * 0.5f, hy + h * 0.22f, col, 1.2f);
-                    Line(hx - bw * 0.35f, hy + h * 0.50f, hx + bw * 0.35f, hy + h * 0.50f, col, 1.2f);
-                    Circle(hx, hy, (h * 0.06f > 3.f ? h * 0.06f : 3.f), col, 1.2f);
                 }
             }
             if (!g_esp) continue;
