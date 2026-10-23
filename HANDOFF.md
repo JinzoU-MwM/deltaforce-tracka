@@ -265,3 +265,32 @@ Bukti shm V14:
 ```
 localCamp=1; p0 depzaivc camp=1 (skip); p2 Marsellio camp=0 (draw); p5 EscapePod camp=0 (draw)
 ```
+
+---
+
+## 13. KOREKSI: faction = ps+0x660 (V15)
+
+§12 salah: `ps+0x680` adalah **flag squad** (1 = 4 orang squad lokal), bukan faction.
+Field faction yang benar:
+```
+ps+0x660 = match team id  (0 = tim lokal; musuh 2..15)
+ps+0x66C = squad slot 1..4
+ps+0x680 = 1 jika squad lokal (MybeautifulM4, caubachacu, depzaivc, Escanor)
+ps+0x670 = camp 1/2 (bukan faction)
+```
+Bukti probe dfteam (satu match):
+```
+MybeautifulM4 660=0 66C=3 680=1   (self)
+caubachacu    660=0 66C=1 680=1   (squad)
+depzaivc12354 660=0 66C=1 680=1   (squad)
+Escanor2442   660=0 66C=1 680=1   (squad)
+HddCREW       660=12 66C=3 680=0  (musuh)
+Marsellio     660=10 66C=3 680=0  (musuh)
+yyChiiiiillsxx 660=5 66C=2 680=0  (musuh)
+```
+Core V15: localCamp = *(ps+0x660); p.camp = *(ps+0x660); p.team = *(ps+0x66C).
+Overlay: enemy-only = skip `p.camp == localCamp`.
+Hasil screenshot V15: label/box hanya DivineSafekey, VIPERALI, Powking,
+FeralCommando (musuh); Escanor/caubachacu/depzaivc (squad) bersih.
+Catatan: overlay bisa capture `snap.txt` (cam+players) sinkron dengan screen.bmp
+lewat event F8 in-game (core keyEdges), untuk validasi W2S tanpa timing skew.

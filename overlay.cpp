@@ -306,7 +306,7 @@ static void DrawDebug(const SharedState& st, int W, int H) {
     }
 }
 
-static void CaptureBmp() {
+static void CaptureBmp(const SharedState* stp) {
     int w = GetSystemMetrics(SM_CXSCREEN), h = GetSystemMetrics(SM_CYSCREEN);
     HDC dc = GetDC(nullptr); HDC mem = CreateCompatibleDC(dc);
     HBITMAP bmp = CreateCompatibleBitmap(dc, w, h); HGDIOBJ old = SelectObject(mem, bmp);
@@ -318,6 +318,10 @@ static void CaptureBmp() {
     BITMAPFILEHEADER fh{}; fh.bfType = 0x4D42; fh.bfOffBits = sizeof(fh) + sizeof(bi); fh.bfSize = fh.bfOffBits + sz;
     FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\screen.bmp", "wb");
     if (f) { fwrite(&fh, sizeof(fh), 1, f); fwrite(&bi, sizeof(bi), 1, f); fwrite(px.data(), 1, sz, f); fclose(f); OLog("shot %dx%d", w, h); }
+    if (stp) { FILE* sf=nullptr; fopen_s(&sf,"C:\\Users\\User\\trackA\\snap.txt","w");
+        if(sf){ fprintf(sf,"CAM %.3f %.3f %.3f %.3f %.3f %.3f %.3f %d\n", stp->camLoc.x,stp->camLoc.y,stp->camLoc.z, stp->camRot.pitch,stp->camRot.yaw,stp->camRot.roll, stp->camFov, stp->camValid);
+            for(int i=0;i<stp->playerCount;i++){ const SPlayer& p=stp->players[i]; fprintf(sf,"P %s %d %d %.1f %.1f %.1f %.1f\n", p.name, p.camp, p.team, p.pos.x,p.pos.y,p.pos.z,p.dist); }
+            fclose(sf); } }
     SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); ReleaseDC(nullptr, dc);
 }
 
@@ -441,7 +445,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                 int bits = g_shm->keyEdges; LONG k2 = g_shm->keySeq;
                 if (k1 == k2) { lastK = k1;
                     if (bits & 1) { g_menu = !g_menu; OLog("INGAME INSERT menu=%d", g_menu ? 1 : 0); }
-                    if (bits & 2) { g_debug = !g_debug; OLog("INGAME F8 debug=%d", g_debug ? 1 : 0); CaptureBmp(); }
+                    if (bits & 2) { g_debug = !g_debug; OLog("INGAME F8 debug=%d", g_debug ? 1 : 0); CaptureBmp(&st); }
                     if (bits & 4) { g_menu = !g_menu; OLog("INGAME HOME menu=%d", g_menu ? 1 : 0); }
                 }
             }
