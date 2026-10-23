@@ -382,7 +382,25 @@ static void LogState(const SharedState& st, int W, int H) {
     }
 }
 
+
+static void SyncMenu() {
+    static HANDLE map = nullptr;
+    static MenuCfg* cfg = nullptr;
+    if (!cfg) {
+        map = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(MenuCfg), MENU_SHM);
+        if (map) cfg = (MenuCfg*)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(MenuCfg));
+    }
+    if (cfg && cfg->magic == MENU_MAGIC && cfg->version == MENU_VERSION) {
+        g_esp = cfg->esp != 0; g_boxes = cfg->boxes != 0; g_names = cfg->names != 0;
+        g_dist = cfg->dist != 0; g_team = cfg->team != 0; g_body = cfg->body != 0; g_aim = cfg->aim != 0;
+        g_aimFovPx = cfg->aimFov; g_aimMaxStep = cfg->aimStep; g_maxDist = cfg->maxDist;
+        g_camZ = cfg->camZ; g_fovAdj = cfg->fovAdj; g_fovAds = cfg->fovAds;
+        g_menu = false;
+    }
+}
+
 static void DrawFrame(SharedState st, int W, int H) {
+    SyncMenu();
     {
         float p = st.camRot.pitch * 3.14159265f / 180.f, y = st.camRot.yaw * 3.14159265f / 180.f;
         float fx = cosf(p) * cosf(y), fy = cosf(p) * sinf(y), fz = sinf(p);

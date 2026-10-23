@@ -384,3 +384,14 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
 - Core pass: fill alpha 0.55, outline 1.6px.
 - Warna musuh merah, kawan cyan, target netral kuning.
 - Screenshot: target di pintu tampil sebagai body kuning isi penuh + halo.
+
+## 23. Menu ImGui (GitHub ocornut/imgui)
+- Source: https://github.com/ocornut/imgui (lihat `fetch_imgui.sh`).
+- `menu_imgui.cpp`: D3D11 offscreen render -> staging readback -> DIB ->
+  `UpdateLayeredWindow` (layered, topmost, per-pixel alpha). Window swapchain biasa
+  TIDAK muncul di atas game; layered+UpdateLayeredWindow HARUS (sama seperti overlay).
+- Menu: ESP/box/name/dist/team/body, aim assist + FOV/step, camZ/fovAdj/fovAds, maxDist.
+  Setting ditulis live ke shm `DFC6_menu_v1` (MenuCfg); overlay membaca tiap frame
+  (`SyncMenu`), menu D2D lama dimatikan.
+- INSERT = hide/show menu. Klik menu untuk fokus.
+- Runbook: `run_v20.bat` (menu ImGui + overlay19).

@@ -72,6 +72,18 @@ struct AimCmd {
     float maxStep;   // max degrees per 8ms write
     uint32_t stamp;  // GetTickCount() from overlay
 };
+struct MenuCfg {
+    uint32_t magic;
+    uint32_t version;
+    int32_t esp, boxes, names, dist, team, body, aim;
+    float aimFov, aimStep, maxDist, camZ, fovAdj, fovAds;
+    int32_t visible;
+    int32_t pad;
+};
+static const uint32_t MENU_MAGIC = 0x44464D31u;
+static const uint32_t MENU_VERSION = 1u;
+static const char* const MENU_SHM = "DFC6_menu_v1";
+
 struct SharedState {
     uint32_t magic;    // 0x44464331
     uint32_t version;  // 2
