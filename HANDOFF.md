@@ -349,3 +349,11 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
 - CameraManager `BP_TestPlayerCameraManager_C` CameraCache (0x3E0) = 0 di SafeHouse;
   kamera pakai ControlRotation + pawn+64 (mode 2). Kalibrasi W2S hanya bisa dari target
   yang terlihat (butuh ground truth mata user).
+
+## 18. V18: kamera head bone
+- Mode-2 camera sekarang pakai head bone lokal (mesh+0x760, world z~161.9) - 10,
+  bukan pawn+64. CAM z 151.9 (sebelumnya 155.5).
+- Proyeksi target pertama (29665,28974) jatuh di pintu (x~1023,y 454-647);
+  target itu memang di balik pintu/tembok -> wallhack skeleton melalui dinding.
+- Mannequin putih di balik pagar bukan target tracked (prop statis / bukan
+  BP_RangeTargetCharacter di list).

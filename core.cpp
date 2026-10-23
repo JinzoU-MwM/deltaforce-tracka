@@ -539,6 +539,30 @@ static inline void QRot(float qx,float qy,float qz,float qw, float vx,float vy,f
     oz = vz + 2.f*(qx*ty - qy*tx);
 }
 
+
+static bool LocalHead(uintptr_t pawn, float& ox, float& oy, float& oz) {
+    uintptr_t mesh = DPtr(R<uint64_t>(pawn + 0x3D0));
+    if (!ValidPtr(mesh)) return false;
+    uintptr_t bp = R<uintptr_t>(mesh + 0x760);
+    int32_t cnt = R<int32_t>(mesh + 0x760 + 8);
+    if (!ValidPtr(bp) || cnt < 10 || cnt > 400) return false;
+    float qx = R<float>(mesh + 0x210), qy = R<float>(mesh + 0x214), qz = R<float>(mesh + 0x218), qw = R<float>(mesh + 0x21C);
+    float tx = R<float>(mesh + 0x220), ty = R<float>(mesh + 0x224), tz = R<float>(mesh + 0x228);
+    float qn = qx*qx + qy*qy + qz*qz + qw*qw;
+    if (!(qn > 0.8f && qn < 1.2f)) return false;
+    float bestz = -1e9f; float bx = 0, by = 0, bz = 0;
+    for (int i = 0; i < cnt && i < 400; ++i) {
+        float lx = R<float>(bp + (uint64_t)i*0x30 + 0x10), ly = R<float>(bp + (uint64_t)i*0x30 + 0x14), lz = R<float>(bp + (uint64_t)i*0x30 + 0x18);
+        if (!((lx==lx)&&(ly==ly)&&(lz==lz))) continue;
+        float wx, wy, wz;
+        QRot(qx,qy,qz,qw, lx,ly,lz, wx,wy,wz);
+        if (wz > bestz) { bestz = wz; bx = wx + tx; by = wy + ty; bz = wz + tz; }
+    }
+    if (bestz < -1e8f) return false;
+    ox = bx; oy = by; oz = bz;
+    return true;
+}
+
 static void FillBones(SPlayer& p, uintptr_t actor) {
     p.boneCount = 0;
     uintptr_t mesh = DPtr(R<uint64_t>(actor + 0x3D0));
@@ -712,7 +736,12 @@ static void Refresh(SharedState& st) {
                 SVec3 sp = rel;
                 if (PosOK(sp)) {
                     st.selfPos = sp;
-                    st.camLoc = SVec3{ sp.x, sp.y, sp.z + 64.f };
+                    float hx, hy, hz;
+                    if (LocalHead(localPawn, hx, hy, hz)) {
+                        st.camLoc = SVec3{ hx, hy, hz - 10.f };
+                    } else {
+                        st.camLoc = SVec3{ sp.x, sp.y, sp.z + 64.f };
+                    }
                     st.camRot = st.controlRot;
                     st.camFov = 90.f;
                     st.camValid = 1;
