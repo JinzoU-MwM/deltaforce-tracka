@@ -300,13 +300,20 @@ static void DumpActorsMeshes(uintptr_t arr, int32_t cnt) {
     FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\body.txt", "a");
     if (!f) return;
     int dumped = 0;
-    for (int32_t i = 0; i < cnt && dumped < 8; ++i) {
+    for (int32_t i = 0; i < cnt && dumped < 60; ++i) {
         uintptr_t a = R<uintptr_t>(arr + (uint64_t)i * 8);
         if (!ValidPtr(a)) continue;
         uintptr_t root = DPtr(R<uint64_t>(a + off::ROOT_COMP));
         SVec3 pos{}; if (ValidPtr(root)) pos = R<SVec3>(root + off::REL_LOCATION);
         char anc[104]; ClassNameToBuf(a, anc, 104);
-        if (anc[0] && anc[0] != '?' && SContains(anc, "Character")) DumpBones(a, f);
+        if (anc[0] && anc[0] != '?')
+            fprintf(f, "ACT %p pos=(%.1f,%.1f,%.1f) class=%s\n", (void*)a, pos.x, pos.y, pos.z, anc);
+        uintptr_t m3 = DPtr(R<uint64_t>(a + 0x3D0));
+        if (ValidPtr(m3)) {
+            char mn[104]; ClassNameToBuf(m3, mn, 104);
+            fprintf(f, "  M3D0 %p class=%s\n", (void*)m3, mn);
+            DumpBones(a, f);
+        } else if (anc[0] && anc[0] != '?' && SContains(anc, "Character")) DumpBones(a, f);
         for (uint32_t o = 0x100; o <= 0xA00; o += 8) {
             uintptr_t p = DPtr(R<uint64_t>(a + o));
             if (!ValidPtr(p)) continue;
@@ -416,6 +423,16 @@ static void DumpBones(uintptr_t actor, FILE* f) {
     uintptr_t root = DPtr(R<uint64_t>(actor + off::ROOT_COMP));
     SVec3 ppos{}; if (ValidPtr(root)) ppos = R<SVec3>(root + off::REL_LOCATION);
     fprintf(f, "CHAR %p mesh=%p class=%s pos=(%.1f,%.1f,%.1f)\n", (void*)actor, (void*)mesh, mc, ppos.x, ppos.y, ppos.z);
+    {
+        float cq0=R<float>(mesh+0x210), cq1=R<float>(mesh+0x214), cq2=R<float>(mesh+0x218), cq3=R<float>(mesh+0x21C);
+        float ct0=R<float>(mesh+0x220), ct1=R<float>(mesh+0x224), ct2=R<float>(mesh+0x228);
+        fprintf(f, "  CTW210 t=(%.1f,%.1f,%.1f) q=(%.3f,%.3f,%.3f,%.3f)\n", ct0,ct1,ct2,cq0,cq1,cq2,cq3);
+        uintptr_t cap = DPtr(R<uint64_t>(actor + 0x108));
+        if (ValidPtr(cap)) {
+            float kx=R<float>(cap+0x220), ky=R<float>(cap+0x224), kz=R<float>(cap+0x228);
+            fprintf(f, "  CAP108 p=%p CTW t=(%.1f,%.1f,%.1f)\n", (void*)cap, kx,ky,kz);
+        }
+    }
     uint32_t cand[4] = {0xEB8, 0x9F8, 0xA08, 0};
     for (int ci = 0; ci < 3; ++ci) {
         uint32_t off = cand[ci];
@@ -694,10 +711,21 @@ static void Refresh(SharedState& st) {
             }
         }
 
-        if (!SContains(cn, g_charTag) && !SContains(cn, g_pawnTag)) continue;
+        bool isTarget = SContains(cn, "RangeTarget") || SContains(cn, "TargetDummy") || SContains(cn, "Dummy");
+        if (!SContains(cn, g_charTag) && !SContains(cn, g_pawnTag) && !isTarget) continue;
         if (SContains(cn, "Health") || SContains(cn, "PropertyReplication") || SContains(cn, "Redeploy") ||
             SContains(cn, "MapRandom") || SContains(cn, "Pickup") || SContains(cn, "Item") || SContains(cn, "Default__")) continue;
         if (a == localPawn) continue;
+        if (!posOK) {
+            uintptr_t m3 = DPtr(R<uint64_t>(a + 0x3D0));
+            if (ValidPtr(m3)) {
+                float mx = R<float>(m3 + 0x220), my = R<float>(m3 + 0x224), mz = R<float>(m3 + 0x228);
+                if (FiniteF(mx) && FiniteF(my) && FiniteF(mz)) {
+                    pos = SVec3{ mx, my, mz };
+                    posOK = PosOK(pos);
+                }
+            }
+        }
         if (n >= 128 || !posOK) continue;
         {
             Stab* slot = nullptr;
@@ -711,7 +739,7 @@ static void Refresh(SharedState& st) {
             }
         }
         uintptr_t ps = DPtr(R<uint64_t>(a + off::PLAYERSTATE));
-        if (!ValidPtr(ps)) continue;
+        if (!ValidPtr(ps) && !isTarget) continue;
         SPlayer& p = st.players[n];
         p.pawn = a; p.ps = ps;
         if (ValidPtr(ps)) {
@@ -721,6 +749,9 @@ static void Refresh(SharedState& st) {
             p.camp = R<int32_t>(ps + 0x660);   // match team id (0 = local team)
             p.team = R<int32_t>(ps + 0x66C);   // squad slot 1..4
             p.bot = 0;
+        } else {
+            SCopy(p.name, 64, "Target");
+            p.camp = -1; p.team = 0; p.bot = 0;
         }
         p.pos = pos;
         FillBones(p, a);
@@ -730,6 +761,44 @@ static void Refresh(SharedState& st) {
         }
         if (!p.name[0]) SCopy(p.name, 64, cn);
         ++n;
+    }
+    {
+        uintptr_t lvArr = R<uintptr_t>(w + 0x158);
+        int32_t lvCnt = R<int32_t>(w + 0x160);
+        if (ValidPtr(lvArr) && lvCnt > 0 && lvCnt < 256) {
+            for (int32_t li = 0; li < lvCnt && n < 128; ++li) {
+                uintptr_t lv = R<uintptr_t>(lvArr + (uint64_t)li * 8);
+                if (!ValidPtr(lv)) continue;
+                uintptr_t a2 = R<uintptr_t>(lv + off::LEVEL_ACTORS);
+                int32_t c2 = R<int32_t>(lv + off::LEVEL_ACTORS + 8);
+                if (!ValidPtr(a2) || c2 <= 0 || c2 > 50000) continue;
+                for (int32_t j = 0; j < c2 && n < 128; ++j) {
+                    uintptr_t a = R<uintptr_t>(a2 + (uint64_t)j * 8);
+                    if (!ValidPtr(a)) continue;
+                    char cn[104]; ClassNameToBuf(a, cn, 104);
+                    if (!SContains(cn, "RangeTarget") && !SContains(cn, "TargetDummy") && !SContains(cn, "Dummy")) continue;
+                    bool dup = false;
+                    for (int k = 0; k < n; ++k) if (st.players[k].pawn == a) { dup = true; break; }
+                    if (dup) continue;
+                    uintptr_t m3 = DPtr(R<uint64_t>(a + 0x3D0));
+                    if (!ValidPtr(m3)) continue;
+                    float mx = R<float>(m3 + 0x220), my = R<float>(m3 + 0x224), mz = R<float>(m3 + 0x228);
+                    SVec3 pos{ mx, my, mz };
+                    if (!PosOK(pos)) continue;
+                    SPlayer& p = st.players[n];
+                    p.pawn = a; p.ps = 0;
+                    SCopy(p.name, 64, "Target");
+                    p.camp = -1; p.team = 0; p.bot = 0;
+                    p.pos = pos;
+                    FillBones(p, a);
+                    if (st.camValid) {
+                        float dx = pos.x - st.camLoc.x, dy = pos.y - st.camLoc.y, dz = pos.z - st.camLoc.z;
+                        p.dist = (float)sqrtf(dx*dx + dy*dy + dz*dz) * 0.01f;
+                    }
+                    ++n;
+                }
+            }
+        }
     }
     st.playerCount = n;
     st.state = 1;

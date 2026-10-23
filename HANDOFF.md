@@ -331,3 +331,12 @@ V16: core fills 16 bones (head/neck/chest/pelvis/shoulders/elbows/hands/hips/kne
 by z-fraction/x-side selection; overlay draws skeleton lines (menu `body 1`) with the
 `team 1` filter = enemy only, `team 0` = all (friend+enemy).
 Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pemain/bot lain.
+
+## 16. V17: single-core shm + range target
+- Blink disebabkan 3 core V16 (16/16b/16c) menulis shm V16 yang sama -> list target/bone
+  bergantian tiap frame. V17 memakai nama shm baru; hanya core17 yang menulis.
+- Range target `BP_RangeTargetCharacter_C` ada di sublevel (world+0x158 Levels array),
+  bukan persistent level. Core17 scan semua level, masukkan target (camp=-1, name Target).
+- Bone target valid: head z=182.7, neck 163.8, chest 138.0, pelvis 106.5,
+  shoulders 137.9, hands 113.1, hips 105.0, knees 63.1, feet 13.5 (base 12.0).
+- CTW target mesh+0x210 t=(29665.2,28974.7,12.0) -> world bone = CTW * local.
