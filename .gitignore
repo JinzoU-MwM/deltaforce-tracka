@@ -1,0 +1,12 @@
+*.exe
+*.dll
+*.obj
+*.pdb
+*.ilk
+*.zip
+*.log
+*.png
+*.bmp
+*.bin
+*.txt
+!camcfg.example.txt
