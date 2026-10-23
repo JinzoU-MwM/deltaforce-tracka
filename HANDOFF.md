@@ -213,3 +213,30 @@ Langkah berikutnya (belum):
 Catatan: layout UObject build ini belum sepenuhnya terpetakan (Outer/Next/Name
 tumpang tindih dengan asumsi 0x18/0x1C/0x28), jadi validasi UClass wajib ketat
 (vtable di module, class=Function, metaclass=Class, region RW).
+
+---
+
+## 11. W2S engine — hasil probe terbaru (2026-10-22)
+
+```
+UClass "GameplayStatics"  = heap, class name index 1530756
+  Children offset          = +0x58 (rantai UField via +0x28)
+  ProjectWorldToScreen     = UFunction di rantai children
+UFunction PWS:
+  NumParams        = 5        (bytes +0xB8: 05 00)
+  ParamSize        = 0x1E     (+0xBA)
+  ReturnValueOffset= 0x1D     (+0xBC)
+  Layout params:
+    0x00 APlayerController* Player
+    0x08 FVector WorldPosition (3 float)
+    0x14 FVector2D ScreenPosition (2 float)
+    0x1C bool bPlayerViewportRelative
+    0x1D bool ReturnValue
+  Func (+0x1D0) = thunk (berubah tiap run; contoh 0x153499960)
+```
+Yang belum: alamat `UObject::ProcessEvent` (virtual) untuk memanggil UFunction
+dengan param buffer di atas. Vtable PC sudah di-dump 0x38..0x58 (dfvt.cpp),
+belum ada entry yang jelas memanggil Func +0x1D0; kandidat ProcessEvent perlu
+diverifikasi dengan disasm (call `[reg+0x1D0]` / mov+call).
+Probe: dfgs/dfgs2 (GameplayStatics), dfpws (metadata), dfpe/dfpe2/dfvt (vtable),
+dfcomp (komponen pawn), dfname/dfname2 (FName).
