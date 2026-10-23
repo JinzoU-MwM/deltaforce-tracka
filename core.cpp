@@ -11,6 +11,7 @@ static uintptr_t g_base = 0;
 static volatile uintptr_t g_pcShared = 0;
 static uintptr_t g_blocks = 0;
 static SharedState* g_shm = nullptr;
+static MenuCfg* g_menuCfg = nullptr;
 
 template <int N> struct Obf {
     unsigned char b[N];
@@ -182,6 +183,8 @@ static void ReadFStringToBuf(uintptr_t addr, char* out, int cap) {
 
 
 static void DumpBones(uintptr_t actor, FILE* f);
+static inline void QRot(float qx,float qy,float qz,float qw, float vx,float vy,float vz, float& ox,float& oy,float& oz);
+static void DumpSkeletonFull(uintptr_t pawn, FILE* f);
 static void DumpBoneNames(uintptr_t mesh, FILE* f);
 static void DumpBody(uintptr_t pawn) {
     FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\body.txt", "a");
@@ -194,7 +197,7 @@ static void DumpBody(uintptr_t pawn) {
     if (ValidPtr(root)) ppos = R<SVec3>(root + off::REL_LOCATION);
     fprintf(f, "root=%p pos=(%.1f,%.1f,%.1f)\n", (void*)root, ppos.x, ppos.y, ppos.z);
     { char pc[104]; ClassNameToBuf(pawn, pc, 104); fprintf(f, "pawnClass=%s\n", pc); }
-    { static bool g_bn = false; if (!g_bn) { g_bn = true; uintptr_t mm = R<uintptr_t>(pawn + 0x3D0); if (ValidPtr(mm)) DumpBoneNames(mm, f); } }
+    { static bool g_bn = false; if (!g_bn) { g_bn = true; uintptr_t mm = R<uintptr_t>(pawn + 0x3D0); if (ValidPtr(mm)) DumpBoneNames(mm, f); DumpSkeletonFull(pawn, f); } }
     DumpBones(pawn, f);
     for (uint32_t o = 0x100; o <= 0xA00; o += 8) {
         uintptr_t p = DPtr(R<uint64_t>(pawn + o));
@@ -448,6 +451,47 @@ static void DumpBoneNames(uintptr_t mesh, FILE* f) {
     }
 }
 
+
+static void DumpSkeletonFull(uintptr_t pawn, FILE* f) {
+    uintptr_t mesh = DPtr(R<uint64_t>(pawn + 0x3D0));
+    if (!ValidPtr(mesh)) { fprintf(f, "SKEL no mesh\n"); return; }
+    uintptr_t asset = DPtr(R<uint64_t>(mesh + 0xEB0));
+    uintptr_t skel = ValidPtr(asset) ? DPtr(R<uint64_t>(asset + 0x60)) : 0;
+    uintptr_t bt = ValidPtr(skel) ? DPtr(R<uint64_t>(skel + 0x38)) : 0;
+    int32_t cnt = ValidPtr(skel) ? R<int32_t>(skel + 0x40) : 0;
+    fprintf(f, "SKEL mesh=%p asset=%p skel=%p bt=%p cnt=%d\n", (void*)mesh, (void*)asset, (void*)skel, (void*)bt, cnt);
+    if (ValidPtr(bt) && cnt > 0) {
+        int n32 = cnt * 6; if (n32 > 0x600 / 4) n32 = 0x600 / 4;
+        for (int i = 0; i < n32; ++i) {
+            uint32_t v = R<uint32_t>(bt + (uint64_t)i * 4);
+            fprintf(f, "U %d %08X\n", i, v);
+        }
+        int strides[3] = { 0xC, 0x10, 0x18 };
+        for (int si = 0; si < 3; ++si) {
+            int st = strides[si];
+            for (int i = 0; i < cnt && i < 25; ++i) {
+                uint32_t n0 = R<uint32_t>(bt + (uint64_t)i * st);
+                uint32_t n1 = R<uint32_t>(bt + (uint64_t)i * st + 4);
+                int32_t par = R<int32_t>(bt + (uint64_t)i * st + 8);
+                char nb[104]; FNameToBuf(n0, nb, 104);
+                fprintf(f, "ST st=0x%X i=%d n0=%u n1=%u par=%d name=%s\n", st, i, n0, n1, par, nb);
+            }
+        }
+    }
+    uintptr_t bp = R<uintptr_t>(mesh + 0x760);
+    int32_t bc = R<int32_t>(mesh + 0x760 + 8);
+    fprintf(f, "BONES ptr=%p cnt=%d\n", (void*)bp, bc);
+    if (ValidPtr(bp) && bc > 0) {
+        float qx=R<float>(mesh+0x210),qy=R<float>(mesh+0x214),qz=R<float>(mesh+0x218),qw=R<float>(mesh+0x21C);
+        float tx=R<float>(mesh+0x220),ty=R<float>(mesh+0x224),tz=R<float>(mesh+0x228);
+        for (int i = 0; i < bc && i < 80; ++i) {
+            float lx=R<float>(bp+(uint64_t)i*0x30+0x10), ly=R<float>(bp+(uint64_t)i*0x30+0x14), lz=R<float>(bp+(uint64_t)i*0x30+0x18);
+            float wx,wy,wz; QRot(qx,qy,qz,qw,lx,ly,lz,wx,wy,wz);
+            fprintf(f, "BT i=%d local=(%.1f,%.1f,%.1f) world=(%.1f,%.1f,%.1f)\n", i, lx,ly,lz, wx+tx,wy+ty,wz+tz);
+        }
+    }
+}
+
 static void DumpBones(uintptr_t actor, FILE* f) {
     uintptr_t mesh = R<uintptr_t>(actor + 0x3D0);
     if (!ValidPtr(mesh)) return;
@@ -569,56 +613,21 @@ static void FillBones(SPlayer& p, uintptr_t actor) {
     if (!ValidPtr(mesh)) return;
     uintptr_t bp = R<uintptr_t>(mesh + 0x760);
     int32_t cnt = R<int32_t>(mesh + 0x760 + 8);
-    if (!ValidPtr(bp) || cnt < 10 || cnt > 400) return;
+    if (!ValidPtr(bp) || cnt < 10 || cnt > 200) return;
     float qx = R<float>(mesh + 0x210), qy = R<float>(mesh + 0x214), qz = R<float>(mesh + 0x218), qw = R<float>(mesh + 0x21C);
     float tx = R<float>(mesh + 0x220), ty = R<float>(mesh + 0x224), tz = R<float>(mesh + 0x228);
     float qn = qx*qx + qy*qy + qz*qz + qw*qw;
     if (!(qn > 0.8f && qn < 1.2f)) return;
-    struct BP { float x, y, z; };
-    BP pts[400]; int n = 0;
-    float minz = 1e9f, maxz = -1e9f;
-    for (int i = 0; i < cnt && i < 400; ++i) {
+    int n = 0;
+    for (int i = 0; i < cnt && i < 80; ++i) {
         float lx = R<float>(bp + (uint64_t)i*0x30 + 0x10), ly = R<float>(bp + (uint64_t)i*0x30 + 0x14), lz = R<float>(bp + (uint64_t)i*0x30 + 0x18);
         if (!((lx==lx)&&(ly==ly)&&(lz==lz))) continue;
         float wx, wy, wz;
         QRot(qx,qy,qz,qw, lx,ly,lz, wx,wy,wz);
-        pts[n].x = wx + tx; pts[n].y = wy + ty; pts[n].z = wz + tz;
-        if (pts[n].z < minz) minz = pts[n].z;
-        if (pts[n].z > maxz) maxz = pts[n].z;
+        p.bones[n].x = wx + tx; p.bones[n].y = wy + ty; p.bones[n].z = wz + tz;
         ++n;
     }
-    float h = maxz - minz;
-    if (n < 10 || h < 50.f || h > 300.f) return;
-    auto pickC = [&](float frac) -> int {
-        int bi = -1; float bd = 1e9f;
-        for (int i = 0; i < n; ++i) { float f = (pts[i].z - minz) / h; float d = fabsf(f - frac); if (d < bd) { bd = d; bi = i; } }
-        return bi;
-    };
-    auto pickSide = [&](float frac, int side) -> int {
-        int bi = -1; float bx = side < 0 ? 1e9f : -1e9f;
-        for (int i = 0; i < n; ++i) {
-            float f = (pts[i].z - minz) / h;
-            if (fabsf(f - frac) > 0.09f) continue;
-            if (side < 0) { if (pts[i].x < bx) { bx = pts[i].x; bi = i; } }
-            else { if (pts[i].x > bx) { bx = pts[i].x; bi = i; } }
-        }
-        if (bi < 0) bi = pickC(frac);
-        return bi;
-    };
-    int head = pickC(1.0f);
-    int neck = pickC(0.90f), chest = pickC(0.75f), pelvis = pickC(0.55f);
-    int ls = pickSide(0.82f, -1), rs = pickSide(0.82f, 1);
-    int le = pickSide(0.68f, -1), re = pickSide(0.68f, 1);
-    int lh = pickSide(0.58f, -1), rh = pickSide(0.58f, 1);
-    int lhip = pickSide(0.50f, -1), rhip = pickSide(0.50f, 1);
-    int lk = pickSide(0.28f, -1), rk = pickSide(0.28f, 1);
-    int lf = pickSide(0.05f, -1), rf = pickSide(0.05f, 1);
-    int idx[16] = { head, neck, chest, pelvis, ls, rs, le, re, lh, rh, lhip, rhip, lk, rk, lf, rf };
-    for (int i = 0; i < 16; ++i) {
-        int j = idx[i]; if (j < 0) j = 0;
-        p.bones[i].x = pts[j].x; p.bones[i].y = pts[j].y; p.bones[i].z = pts[j].z;
-    }
-    p.boneCount = 16;
+    p.boneCount = n;
 }
 
 
@@ -952,7 +961,12 @@ static void Refresh(SharedState& st) {
                     uintptr_t a = R<uintptr_t>(a2 + (uint64_t)j * 8);
                     if (!ValidPtr(a)) continue;
                     char cn[104]; ClassNameToBuf(a, cn, 104);
-                    if (!SContains(cn, "RangeTarget") && !SContains(cn, "TargetDummy") && !SContains(cn, "Dummy")) continue;
+                    bool isChar = SContains(cn, "Character") || SContains(cn, "Pawn") ||
+                                  SContains(cn, "RangeTarget") || SContains(cn, "TargetDummy") || SContains(cn, "Dummy");
+                    if (!isChar) continue;
+                    if (SContains(cn, "Health") || SContains(cn, "PropertyReplication") || SContains(cn, "Redeploy") ||
+                        SContains(cn, "MapRandom") || SContains(cn, "Pickup") || SContains(cn, "Item") || SContains(cn, "Default__")) continue;
+                    if (a == localPawn) continue;
                     bool dup = false;
                     for (int k = 0; k < n; ++k) if (st.players[k].pawn == a) { dup = true; break; }
                     if (dup) continue;
@@ -961,10 +975,20 @@ static void Refresh(SharedState& st) {
                     float mx = R<float>(m3 + 0x220), my = R<float>(m3 + 0x224), mz = R<float>(m3 + 0x228);
                     SVec3 pos{ mx, my, mz };
                     if (!PosOK(pos)) continue;
+                    uintptr_t ps = DPtr(R<uint64_t>(a + off::PLAYERSTATE));
                     SPlayer& p = st.players[n];
-                    p.pawn = a; p.ps = 0;
-                    SCopy(p.name, 64, "Target");
-                    p.camp = -1; p.team = 0; p.bot = 0;
+                    p.pawn = a; p.ps = ps;
+                    if (ValidPtr(ps)) {
+                        ReadFStringToBuf(ps + off::PLAYERNAME, p.name, 64);
+                        if (!p.name[0]) ReadFStringToBuf(ps + 0x488, p.name, 64);
+                        if (SContains(p.name, "BP_") || SContains(p.name, "PropertyReplication") || SContains(p.name, "Default__")) p.name[0] = 0;
+                        p.camp = R<int32_t>(ps + 0x660);
+                        p.team = R<int32_t>(ps + 0x66C);
+                    } else {
+                        SCopy(p.name, 64, cn);
+                        p.camp = -1; p.team = 0;
+                    }
+                    p.bot = 0;
                     p.pos = pos;
                     FillBones(p, a);
                     if (st.camValid) {
@@ -994,19 +1018,21 @@ static TpMayRunLong_t g_mayRunLong = nullptr;
 
 static void PollKeys() {
     static bool pi = false, pf = false, ph = false;
+    static bool pm = false;
     bool i = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
     bool f = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
     bool h = (GetAsyncKeyState(VK_HOME) & 0x8000) != 0;
+    bool m = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState(VK_MENU) & 0x8000) && (GetAsyncKeyState('M') & 0x8000));
     int bits = 0;
     if (i && !pi) bits |= 1;
     if (f && !pf) bits |= 2;
     if (h && !ph) bits |= 4;
-    pi = i; pf = f; ph = h;
+    if (m && !pm) bits |= 8;
+    pi = i; pf = f; ph = h; pm = m;
     if (bits && g_shm) { g_shm->keyEdges = bits; InterlockedIncrement(&g_shm->keySeq); }
 }
 
 static void AimLoop() {
-    uint32_t seed = GetTickCount() | 1u;
     for (;;) {
         PollKeys();
         uintptr_t pc = (uintptr_t)g_pcShared;
@@ -1014,24 +1040,41 @@ static void AimLoop() {
             LONG s1 = g_shm->cmd.seq;
             if (!(s1 & 1)) {
                 int32_t en = g_shm->cmd.enable;
-                float dY = g_shm->cmd.dYaw, dP = g_shm->cmd.dPitch;
+                float wy = g_shm->cmd.yaw, wp = g_shm->cmd.pitch;
                 float ms = g_shm->cmd.maxStep;
                 uint32_t ts = g_shm->cmd.stamp;
+                int32_t mode = g_shm->cmd.mode;
                 LONG s2 = g_shm->cmd.seq;
                 if (s1 == s2 && en && (GetTickCount() - ts) < 150) {
-                    float cur[3];
-                    if (ReadMem(cur, pc + off::ROTATION_INPUT, sizeof(cur)) &&
-                        FiniteF(cur[0]) && FiniteF(cur[1]) && FiniteF(cur[2]) &&
-                        fabsf(cur[0]) < 10000.f && fabsf(cur[1]) < 10000.f && fabsf(cur[2]) < 10000.f) {
-                        if (!(ms > 0.05f)) ms = 0.35f;
-                        if (ms > 2.0f) ms = 2.0f;
-                        float dy = dY * 0.5f, dp = dP * 0.5f;
-                        if (dy > ms) dy = ms; if (dy < -ms) dy = -ms;
-                        if (dp > ms) dp = ms; if (dp < -ms) dp = -ms;
-                        seed = seed * 1664525u + 1013904223u;
-                        float j = ((float)((int)((seed >> 16) & 0x1FF) - 256)) * 0.0002f;
-                        SRot r{ dp + j * 0.4f, dy + j, 0.f };
+                    SRot ctrl = R<SRot>(pc + off::CONTROL_ROT);
+                    float dY = wy - ctrl.yaw;
+                    while (dY > 180.f) dY -= 360.f;
+                    while (dY < -180.f) dY += 360.f;
+                    float dP = wp - ctrl.pitch;
+                    while (dP > 180.f) dP -= 360.f;
+                    while (dP < -180.f) dP += 360.f;
+                    if (!(ms > 0.02f)) ms = 0.6f;
+                    if (ms > 6.0f) ms = 6.0f;
+                    if (dY > ms) dY = ms; if (dY < -ms) dY = -ms;
+                    if (dP > ms) dP = ms; if (dP < -ms) dP = -ms;
+                    if (fabsf(dY) < 0.10f && fabsf(dP) < 0.10f) { Sleep(8); continue; }
+                    static uint32_t js = 0x1234567u;
+                    js = js * 1664525u + 1013904223u;
+                    float jy = ((float)((js >> 16) & 0x3F) - 32.f) * 0.0008f;
+                    js = js * 1664525u + 1013904223u;
+                    float jp = ((float)((js >> 16) & 0x3F) - 32.f) * 0.0008f;
+                    if ((js & 0x1F) == 0) { Sleep(8); continue; }
+                    if (mode == 1) {
+                        ctrl.yaw += dY; ctrl.pitch += dP;
+                        WriteMem((void*)(pc + off::CONTROL_ROT), &ctrl, sizeof(ctrl));
+                    } else {
+                        SRot r{ dP + jp, dY + jy, 0.f };
                         WriteMem((void*)(pc + off::ROTATION_INPUT), &r, sizeof(r));
+                    }
+                    static int ac = 0;
+                    if ((ac++ & 31) == 0) {
+                        FILE* f = nullptr; fopen_s(&f, "C:\Users\User\trackA\aim.log", "a");
+                        if (f) { fprintf(f, "APPLY dY=%.2f dP=%.2f ctrl=(%.2f,%.2f)\n", dY, dP, ctrl.pitch, ctrl.yaw); fclose(f); }
                     }
                 }
             }
@@ -1045,6 +1088,92 @@ static VOID CALLBACK AimCb(void* inst, void*, void*) {
     AimLoop();
 }
 
+
+static void AimCore(SharedState& st) {
+    static DWORD lastFlag = 0;
+    static bool autoAim = false;
+    DWORD now = GetTickCount();
+    if (now - lastFlag > 500) {
+        lastFlag = now;
+        autoAim = (GetFileAttributesA("C:\\Users\\User\\trackA\\aim.flag") != INVALID_FILE_ATTRIBUTES);
+    }
+    int cfgAim = 0, cfgAuto = 0;
+    float cfgFov = 160.f, cfgStep = 0.35f;
+    if (g_menuCfg && g_menuCfg->magic == MENU_MAGIC && g_menuCfg->version == MENU_VERSION) {
+        cfgAim = g_menuCfg->aim; cfgAuto = g_menuCfg->pad;
+        cfgFov = g_menuCfg->aimFov; cfgStep = g_menuCfg->aimStep;
+    }
+    bool rmb = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+    bool active = autoAim || cfgAuto || (cfgAim && rmb);
+    if (!active || st.state != 1 || !st.camValid || !st.pc) return;
+    float fovHalf = atanf((cfgFov / 960.f) * tanf(st.camFov * 3.14159265f / 360.f)) * 180.f / 3.14159265f;
+    if (!(fovHalf > 0.5f)) fovHalf = 1.f;
+    if (fovHalf > 60.f) fovHalf = 60.f;
+    float p = st.camRot.pitch * 3.14159265f / 180.f;
+    float y = st.camRot.yaw * 3.14159265f / 180.f;
+    float fx = cosf(p) * cosf(y), fy = cosf(p) * sinf(y), fz = sinf(p);
+    float best = 1e9f; int bi = -1; float tx = 0, ty = 0, tz = 0;
+    for (int i = 0; i < st.playerCount; ++i) {
+        const SPlayer& pl = st.players[i];
+        if (pl.dist > 500.f) continue;
+        if (st.localCamp >= 0 && pl.camp == st.localCamp) continue;
+        float hx, hy, hz;
+        if (pl.boneCount > 32) { hx = pl.bones[32].x; hy = pl.bones[32].y; hz = pl.bones[32].z; }
+        else { hx = pl.pos.x; hy = pl.pos.y; hz = pl.pos.z + 62.f; }
+        float dx = hx - st.camLoc.x, dy = hy - st.camLoc.y, dz = hz - st.camLoc.z;
+        float len = sqrtf(dx*dx + dy*dy + dz*dz); if (len < 1.f) continue;
+        float dot = (dx*fx + dy*fy + dz*fz) / len;
+        if (dot < 0.3f) continue;
+        float ang = acosf(dot) * 180.f / 3.14159265f;
+        if (ang <= fovHalf && ang < best) { best = ang; bi = i; tx = hx; ty = hy; tz = hz; }
+    }
+    if (bi < 0) return;
+    float dx = tx - st.camLoc.x, dy = ty - st.camLoc.y, dz = tz - st.camLoc.z;
+    float wy = atan2f(dy, dx) * 180.f / 3.14159265f;
+    float wp = atan2f(dz, sqrtf(dx*dx + dy*dy)) * 180.f / 3.14159265f;
+    SRot cur = R<SRot>(st.pc + off::CONTROL_ROT);
+    float dY = wy - cur.yaw; while (dY > 180.f) dY -= 360.f; while (dY < -180.f) dY += 360.f;
+    float dP = wp - cur.pitch; while (dP > 180.f) dP -= 360.f; while (dP < -180.f) dP += 360.f;
+    float ms = cfgStep * 10.f;
+    if (!(ms > 0.5f)) ms = 0.5f; if (ms > 20.f) ms = 20.f;
+    if (dY > ms) dY = ms; if (dY < -ms) dY = -ms;
+    if (dP > ms) dP = ms; if (dP < -ms) dP = -ms;
+    cur.yaw += dY; cur.pitch += dP;
+    WriteMem((void*)(st.pc + off::CONTROL_ROT), &cur, sizeof(cur));
+    static int cnt = 0;
+    if ((cnt++ & 15) == 0) {
+        FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\aim.log", "a");
+        if (f) { fprintf(f, "AIM tgt=%d ang=%.2f cur=(%.2f,%.2f) want=(%.2f,%.2f) d=(%.2f,%.2f)\n", bi, best, cur.pitch, cur.yaw, wp, wy, dP, dY); fclose(f); }
+    }
+}
+
+static void EnsureOverlay() {
+    static DWORD last = 0; static bool started = false;
+    if (started) return;
+    DWORD now = GetTickCount();
+    if (now - last < 1000) return;
+    last = now;
+    if (GetFileAttributesA("C:\\Users\\User\\trackA\\start_overlay.flag") == INVALID_FILE_ATTRIBUTES) return;
+    DeleteFileA("C:\\Users\\User\\trackA\\start_overlay.flag");
+    STARTUPINFOA si{}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    char cwd[] = "C:\\Users\\User\\trackA";
+    if (CreateProcessA("C:\\Users\\User\\trackA\\dfimgui_overlay.exe", nullptr, nullptr, nullptr, FALSE, 0, nullptr, cwd, &si, &pi)) {
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread); started = true;
+    }
+}
+
+static void KeyTest() {
+    static DWORD last = 0;
+    DWORD now = GetTickCount();
+    if (now - last < 500) return;
+    last = now;
+    if (GetFileAttributesA("C:\\Users\\User\\trackA\\keytest.flag") == INVALID_FILE_ATTRIBUTES) return;
+    DeleteFileA("C:\\Users\\User\\trackA\\keytest.flag");
+    keybd_event(VK_INSERT, 0, 0, 0);
+    Sleep(40);
+    keybd_event(VK_INSERT, 0, KEYEVENTF_KEYUP, 0);
+}
 typedef HRESULT(NTAPI* TpAllocWork_t)(void**, void*, void*, void*);
 typedef void(NTAPI* TpPostWork_t)(void*);
 
@@ -1065,6 +1194,8 @@ static VOID CALLBACK Worker(void* inst, void*, void*) {
     HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedState), shmName);
     if (map) g_shm = (SharedState*)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState));
     if (!g_shm) return;
+    { HANDLE mm = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(MenuCfg), L"DFC6_menu_v1");
+      if (mm) g_menuCfg = (MenuCfg*)MapViewOfFile(mm, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(MenuCfg)); }
     g_shm->magic = SHM_MAGIC;
     g_shm->version = SHM_VERSION;
 
@@ -1075,8 +1206,10 @@ static VOID CALLBACK Worker(void* inst, void*, void*) {
 #else
     for (;;) {
         Refresh(st);
+        EnsureOverlay();
+        KeyTest();
         Publish(st);
-        Sleep(33);
+        Sleep(10);
     }
 #endif
 }

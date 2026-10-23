@@ -1,55 +1,51 @@
-# Track A v3 — manual-map core + native-input aim
+# Delta Force Track A — ESP + Aim (private)
 
-## Arsitektur
-```
-DF-MENU.bat  -> self-elevate -> DF-MENU.exe
-DF-MENU.exe  -> cari DeltaForceClient-Win64-Shipping.exe
-             -> ManualMap(dfcore.dll)   [utama, tanpa LoadLibrary]
-             -> fallback LoadLibrary    [kalau manual map gagal]
-             -> start dfoverlay.exe
-dfcore.dll   -> read-only GWorld/player/camera -> shared memory (ver 3)
-             -> aim worker 8 ms: tulis RotationInput 0x570
-dfoverlay.exe-> layered window luar, baca shared memory, ESP + menu
-```
+Riset dan implementasi ESP/aim untuk `DeltaForceClient-Win64-Shipping.exe` **1.14.0.772**.
+Repo private. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, build, deploy, anti-cheat, dan known issues.
 
-## Manual map (map.h)
-- Baca PE, alloc MEM_COMMIT|RESERVE, tulis header + section.
-- Relokasi via .reloc (RVA -> file offset per section).
-- Import resolve via nama (kernel32-only karena dfcore /MT).
-- Section protection: RX / R / RW (bukan RWX).
-- **RtlAddFunctionTable** dari .pdata (wajib untuk SEH x64).
-- Entry dipanggil lewat stub (mov rcx=base, edx=1, r8=0, call entry).
-- Header 0x1000 di-zero setelah init.
-- TLS directory: tidak ada di dfcore (diverifikasi pefile) -> tidak perlu callback.
+## Isi repo
 
-## Bukti uji (headless)
-```
-manualmap pid=... ok=1 err=0
-shmread        magic=44464331 ver=3 seq=24 state=2
-target alive   True          (SEH menangkap read invalid, tidak crash)
-tasklist /m    dfcore.dll TIDAK muncul  (no PEB entry)
-DF-MENU --test exit=0, shmread ver=3, no PEB entry
-```
-String audit tetap bersih (XOR 0x5A).
+| Path | Isi |
+|---|---|
+| `core.cpp` | core30 DLL (in-game): scan semua level, publish shm V30 tiap 10ms, AimLoop `ROTATION_INPUT`, PollKeys, EnsureOverlay |
+| `shared.h` | SharedState/SPlayer/AimCmd/MenuCfg + nama shm V22–V30 |
+| `overlay_imgui.cpp` | overlay multi V22–V30: ESP, skeleton, FOV circle, prediksi `g_draw`, ADS FOV, AimCmd, menu |
+| `Offsets.hpp` | UEOffsets (UE5 SDK: FNamePool/UObject) |
+| `build30.bat` | build core30 + overlay multi (MSVC) |
+| `StartOverlay.bat` | kill overlay → copy `dfimgui_overlay_multi.exe` → start |
+| `watch_inject.bat` | watcher SYSTEM: tunggu proses game → inject core30 |
+| `injsys.bat`, `inj30.bat` | injector satu kali (SYSTEM) |
+| `setup_imgui.ps1` | clone Dear ImGui ke `imgui/` (dibutuhkan build) |
+| `docs/HANDOFF-history-core11.md` | handoff lama (core11, riset offset awal) |
+| `dist/` | build output (dibuat dari `build30.bat`; tidak selalu di-commit) |
 
-## Offset
-```
-GWorld 0x1D9E4E78 / mirror 0x1D9E6E78 / GNames 0x1E5A7788
-PersistentLevel 0xF8, OwningGameInstance 0x190, Actors 0x98
-LocalPlayers 0x38, PlayerController 0x30, AckPawn 0x3F0, CameraManager 0x408
-PlayerState 0x390, PlayerName 0x478, Camp 0x664, CameraCache 0x3E0
-ControlRotation 0x3D8, NetConnection 0x568, RotationInput 0x570 (inferensi)
-pointer = raw & 0xFFFFFFFFFFFF
+## Quickstart
+
+```powershell
+# 1. Dependensi
+powershell -ExecutionPolicy Bypass -File .\setup_imgui.ps1
+
+# 2. Build (butuh VS2022 BuildTools)
+.\build30.bat
+
+# 3. Inject core30 (SYSTEM; lihat HANDOFF §8)
+schtasks /create /tn dfa_inj /tr "C:\Users\User\trackA\injsys.bat" /sc once /st 23:59 /ru SYSTEM /rl HIGHEST /f
+schtasks /run /tn dfa_inj
+
+# 4. Overlay (session game)
+StartOverlay.bat
 ```
 
-## Sisa permukaan deteksi
-- CreateRemoteThread ke stub di memori unbacked (start address di luar module).
-- VAD private-executable untuk image yang di-map manual (ACE kernel bisa scan).
-- Named section handle di proses game.
-- Statistik server untuk aim; modul/VAD untuk ESP.
-- Belum diuji in-match.
+Hotkey: **INSERT** atau **Ctrl+Alt+M** (dibaca core → shm `keyEdges`). Fallback: `menu.flag`/`ToggleMenu.bat`.
 
-## Pakai
-1. Game sudah jalan (lobby/match).
-2. Double-click `DF-MENU.bat` (UAC Yes) -> MessageBox hasil.
-3. `INSERT` menu; masuk match untuk ESP; F8 toggle debug.
+## Status
+
+- ESP semua player (box/nama/jarak/skeleton), team filter off, maxDist 1000.
+- FOV circle selalu tampil; aim hanya target di dalam circle.
+- ADS: W2S pakai slider `FOV ADS` saat RMB.
+- Prediksi `g_draw` (EMA + clamp) dipakai di DrawESP.
+- Aim stealth: `AimCmd` absolute → core `AimLoop` → `ROTATION_INPUT` (bukan `ControlRotation`).
+
+## Warning
+
+Private research. Anti-cheat dapat mendeteksi injeksi/memory write; tidak ada jaminan undetected. Gunakan di lingkungan uji/terotorisasi.

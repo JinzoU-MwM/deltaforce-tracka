@@ -11,3 +11,11 @@
 *.txt
 !camcfg.example.txt
 third_party/imgui/
+
+# build dir clone (see setup_imgui.ps1)
+imgui/
+
+# ship binaries in dist even though *.exe/*.dll ignored above
+!dist/
+!dist/*.exe
+!dist/*.dll

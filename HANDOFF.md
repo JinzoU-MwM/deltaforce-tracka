@@ -1,417 +1,297 @@
-# HANDOFF — Delta Force ESP (Track A)
+# HANDOFF — Delta Force ESP + Aim (Track A)
 
-Status per 2026-10-22. Target: `DeltaForceClient-Win64-Shipping.exe` versi **1.14.0.772** (Steam/international).
-Repo ini **private**. Isinya riset offset, probe, core, overlay, dan catatan open issue.
+Updated: **2026-10-23** (core30 / overlay V30)
+Target: `DeltaForceClient-Win64-Shipping.exe` **1.14.0.772** (Steam/international)
+Repo: private `JinzoU-MwM/deltaforce-tracka`
 
----
-
-## 1. Ringkasan status
-
-| Komponen | Status | Bukti |
-|---|---|---|
-| Enumerasi player | **OK** | in-match `players=39..44`, `actors=1900..5000` |
-| Nama player | **OK** | `Dkhuii36`, `Nutiiz15`, `KhunRachen`, `MybeautifulM4`, `AgentSea`, dll |
-| Posisi player | **OK untuk aktor dekat/plain** | `REL` root+0x168; contoh `p1 dist=20.8 pos=(14037,-1644,-5332)` |
-| Posisi aktor jauh | **ENKRIPSI / corrupted** | `AgentSea rel=(-0,3.17e27,-449)`, `ImVietNam16 rel=(3.85e7,0,-449)` |
-| Kamera first-person | **aproksimasi** | pawn + ControlRotation (0x3D8), eye +64, FOV 90 |
-| Kamera third-person/vehicle/deathcam/top-down | **BELUM ADA** | `BP_TestPlayerCameraManager_C` hanya template POV |
-| ADS/zoom FOV | **BELUM ADA** | 1.5x/4x mengubah FOV, tidak terbaca dari memori |
-| Overlay draw path | **OK** | uji kotak fixed hijau tampil |
-| Kalibrasi manual | **OK** | `camcfg.txt` (camZ camFwd fovAdj fovAds), dibaca tiap 0.5s |
-| Inject | **OK via dfsecinject** | DF-MENU manual-map bisa gagal `err=5` di state tertentu |
+Status singkat: ESP semua player (box/nama/jarak/skeleton), FOV circle, ADS FOV, prediksi gerak, aim assist via `ROTATION_INPUT`. Anti-cheat membatasi reinject setelah injeksi pertama (details §9).
 
 ---
 
-## 2. Arsitektur yang dipakai sekarang
+## 0. TL;DR
 
-```
-core11  (SHM_V11) : baca world/actor/PlayerState -> shared memory v11
-overlay11         : layered window, baca shm, ESP + menu, kalibrasi camcfg
-camcfg.txt        : "camZ camFwd fovAdj fovAds"
-                    camFwd negatif = mundur (third-person)
-                    fovAds dipakai saat RMB/ADS
-```
-
-Build Windows (di `C:\Users\User\trackA`):
-
-```
-build_v11.bat        # core11 + overlay11 + shmread11
-build_ov11g.bat      # overlay saja (versi final: calibration + ADS fov)
-```
-
-Deploy:
-```
-schtasks /create /tn dfa_c /tr "C:\Users\User\trackA\dfsecinject.exe <PID> C:\Users\User\trackA\dfcore11.dll" /sc once /st 00:00 /ru SYSTEM /rl HIGHEST /f
-schtasks /run /tn dfa_c
-schtasks /create /tn dfa_o /tr "C:\Users\User\trackA\sessrun.exe C:\Users\User\trackA\dfoverlay11.exe" /sc once /st 00:00 /ru SYSTEM /rl HIGHEST /f
-schtasks /run /tn dfa_o
-```
-Verifikasi data:
-```
-sessrun.exe shmread11.exe   -> C:\Users\User\trackA\shm_now.log
-```
+- **core30.dll** (in-game) publish `SharedState` **V30** tiap **10 ms**: scan **semua level**, class `Character`/`Pawn` (+ RangeTarget/Dummy), `PlayerState` **opsional**, maks 128 player, `FillBones` 80 bone.
+- **overlay multi** (`dfimgui_overlay.exe`) di session game: scan shm **V22–V30**, pilih versi core yang hidup (prefer tertinggi); ImGui D3D11 layered; ESP, FOV circle, prediksi `g_draw`, ADS FOV, aim `AimCmd`.
+- **Deploy**: inject **SYSTEM** (`dfsecinject.exe <pid> dfcore30.dll`), overlay lewat `StartOverlay.bat` / core `EnsureOverlay` (`start_overlay.flag`).
+- **Hotkey**: `INSERT` / `Ctrl+Alt+M` dibaca **core** (`PollKeys` → `keySeq/keyEdges`), overlay toggle menu. Fallback: file `menu.flag` via `ToggleMenu.bat`.
+- **Aim**: target dalam FOV circle, head bone 32, `AimCmd` absolute yaw/pitch, core apply ke `ROTATION_INPUT` (bukan `ControlRotation`).
 
 ---
 
-## 3. Offset terverifikasi (build 1.14.0.772)
-
-Pointer game **tagged**: selalu `raw & 0xFFFFFFFFFFFF` sebelum deref.
+## 1. Arsitektur
 
 ```
-GWorld global        0x01D9E4E78        (mirror 0x01D9E6E78)
-GNames blocks        0x01E5A7788
-ClassPrivate         0x08
-NamePrivate          0x1C
-World.PersistentLevel  0xF8   (tagged)
-World.OwningGameInstance 0x190 (tagged)
-Level.Actors         0x98  (TArray ptr; count di +0x98+8)
-GameInstance.LocalPlayers 0x38
-UPlayer.PlayerController  0x30
-PC.AcknowledgedPawn  0x3F0
-PC.PlayerCameraManager 0x408   (BP_TestPlayerCameraManager_C)
-Actor.RootComponent  0x180
-SceneComponent.RelativeLocation 0x168
-Actor.PlayerState    0x390
-PlayerState.PlayerNamePrivate 0x478  (0x488 juga berisi nama sama)
-PlayerState.TeamId   0x66C
-PlayerState.Camp     0x670
-PC.ControlRotation   0x3D8   (FRotator; yaw 0..360, pitch -89..89)
+┌──────────────────────────── DeltaForceClient-Win64-Shipping.exe (session user) ─────────────────────────┐
+│  core30.dll (injected)                                                                                  │
+│    Worker (≈10ms) : Refresh() → players/camera/World → Publish() ke SharedState V30                      │
+│    AimLoop (≈8ms): PollKeys() + AimCmd (absolute yaw/pitch) → clamp/jitter → ROTATION_INPUT             │
+│    EnsureOverlay(): flag start_overlay.flag → CreateProcess(dfimgui_overlay.exe) di session yang sama     │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                │ SharedState V30 (named shm, session-local)
+                ▼
+┌──────────────────────────────── overlay process (session 1, layered topmost) ────────────────────────────┐
+│  dfimgui_overlay.exe (multi V22–V30)                                                                     │
+│    scan shm → lock versi core yang valid → Snapshot(seqlock) → UpdatePrediction() → g_draw               │
+│    DrawESP: FOV circle + box/name/dist + skeleton (bone 66+) + DRAW counter                              │
+│    AimTick: target px di dalam circle → AimCmd absolute → core AimLoop                                   │
+│    Menu: INSERT/Ctrl+Alt+M (keyEdges) atau menu.flag; slider FOV/step/maxDist/FOV ADS                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Catatan: offset DMA international (repo `heinocheat/Delta_Force_DMA_Cheat_AFG`, update 2026-10-22) **tidak cocok** dengan build ini:
-`Uworld 0x1280AE68`, `APawn 0x408`, `CameraManager 0x428`, `ROOT 0x188`, `REL 0x16C`, `PS 0x3A0`, `NAME 0x488`, `TeamId 0x67C`, `camp 0x680`.
-Semua sudah diuji live dan **gagal** di build kita. Jangan dipakai.
-
-SDK dump `dump_1.102.37100.16.5_sdk` (Downloads) berguna untuk layout UE:
-`Controller::ControlRotation 0x3E0`, `PlayerController::AcknowledgedPawn 0x400`, `PlayerCameraManager 0x418`,
-`FCameraCacheEntry { TimeStamp; POV@+0x10 }`, `CameraCachePrivate 0x2BF0` (versi 1.102, bukan build kita).
+**MenuCfg** (`DFC6_menu_v1`) adalah jalur lama untuk `AimCore` core-core lama. Overlay **selalu menulis `aim=0` dan `pad=0`** supaya `AimCore` (direct `ControlRotation`) tidak pernah aktif; aim hanya lewat `AimCmd` → `ROTATION_INPUT`.
 
 ---
 
-## 4. Kamera — temuan dan masalah
+## 2. Shared memory (`shared.h`)
 
-- `PC+0x408` = `BP_TestPlayerCameraManager_C`.
-- POV di dalamnya hanya **template**: `(0,8000,5000) rot=(80,2,3) fov=50` dan `(200,0,10) fov=30`, berulang di 0x2C5E0/0x2DEF0/0x2F310/0x30870.
-- `CameraCachePrivate` (0x2F310) +0x10 dan `ViewTarget` (0x2DEF0) +0x10 = **nol**.
-- `ControlRotation` 0x3D8 **valid** (pernah dicek: rot yaw 281.14 ↔ pawn yaw -78.5), tapi di beberapa state kamera view tidak sama dengan control rotation (third-person/deathcam).
-- DefaultFOV di CameraManager: 90.00 di 0x388/0x40C/0x410.
-- ADS 1.5x/4x mengubah FOV efektif (~67° / ~28°), tidak ada field FOV aktif yang terbaca.
-- `pawn+0xE70` (BlackBoard) = 0 di build ini → `bIsZooming`/weapon tidak terbaca.
-- Solusi sementara: `camcfg.txt` (`camZ`, `camFwd`, `fovAdj`, `fovAds`).
+Nama shm di-obfuscate XOR `0x5A` per versi (`kShmName` di `shared.h`, dipilih `/DSHM_Vxx`). Overlay tidak memakai `kShmName`; dia hardcode `kName22..kName30` dan mencoba semuanya (V22→V30, prefer tertinggi).
+
+```c
+struct SPlayer {
+    uint64_t pawn, ps;
+    char     name[64];
+    int32_t  camp, team, bot;
+    SVec3    pos;
+    float    dist;          // meter (cm * 0.01)
+    SVec3    bones[80];     // world, raw mesh bone order
+    int32_t  boneCount;
+};
+
+struct AimCmd {
+    volatile LONG seq;      // seqlock
+    int32_t enable;
+    float   yaw, pitch;     // absolute desired control-rotation angles (deg)
+    float   maxStep;        // clamp deg per 8ms apply
+    uint32_t stamp;         // GetTickCount() overlay; core accepts <150ms
+    int32_t mode;           // 0 = ROTATION_INPUT (default), 1 = ControlRotation (unused)
+};
+
+struct MenuCfg {            // legacy; overlay menulis aim=0/pad=0
+    uint32_t magic, version;
+    int32_t  esp, boxes, names, dist, team, body, aim;
+    float    aimFov, aimStep, maxDist, camZ, fovAdj, fovAds;
+    int32_t  visible, pad;
+};
+
+struct SharedState {
+    uint32_t magic;         // 0x44464331
+    uint32_t version;       // 30 (V22..V30 didukung overlay)
+    volatile LONG seq;
+    int32_t  state;         // 0 init, 1 ok, 2 no world, 3 level mismatch, 4 no GI
+    int32_t  actorCount, localCamp, localTeam, playerCount, camValid;
+    SVec3    camLoc;  SRot camRot;  float camFov;
+    uint64_t world, level, gi, pc, localPawn;
+    SRot     controlRot;  SVec3 selfPos;
+    int32_t  camMode;       // 1..4; 2 = fallback controlRot + head, 4 = auto-scan POV
+    int32_t  dbgCount;  SDbgActor dbg[64];
+    SPlayer  players[128];
+    AimCmd   cmd;
+    volatile LONG keySeq;  int32_t keyEdges;  int32_t selfDead;
+};
+```
+
+**Versi penting**
+
+| Versi | Perubahan |
+|---|---|
+| V22 | `bones[80]`, shm scan multi |
+| V23 | `AimCmd` absolute (yaw/pitch) + overlay multi |
+| V24 | MenuCfg + PollKeys Ctrl+Alt+M |
+| V25/V26 | overlay tanpa RegisterHotKey; keytest |
+| V27 | AimCore direct dimatikan; jitter/deadzone AimLoop |
+| V28/V29 | FOV circle + prediksi overlay + publish 10ms |
+| **V30** | player scan **semua level** + `Character/Pawn` + PS opsional; overlay scan V22–V30 |
 
 ---
 
-## 5. Enkripsi posisi (blocker utama ESP akurat)
-
-Aktor dekat/visible punya `REL` plain; aktor jauh **garbage**:
+## 3. Offset game (`namespace off` di `core.cpp`)
 
 ```
-MybeautifulM4  rel=(9635,16165,-449)          plain
-Dkhuii36       rel=(10817,18526,-442)         plain
-AgentSea       rel=(-0,3.17e27,-449)          encrypted
-ImVietNam16    rel=(3.85e7,0,-449)            encrypted
-Tranphongaz    rel=(0,-2.1e21,-830)           encrypted
-ondatraCZE     rel=(1.43e15,-0,-455)          encrypted
+GWORLD            0x1D9E4E78 (enc 0x1D9E6E78)
+GNAMES_BLOCKS     0x1E5A7788
+CLASSPRIVATE      0x08
+NAMEPRIVATE       0x1C
+PERSISTENT_LEVEL  0xF8     // World
+OWNING_GI         0x190    // World
+LEVEL_ACTORS      0x98     // ULevel.Actors
+LOCALPLAYERS      0x38     // GameInstance
+LOCAL_PC          0x30     // LocalPlayer
+ACK_PAWN          0x3F0    // PlayerController
+CAM_MGR           0x408    // PlayerController
+ROOT_COMP         0x180    // Actor
+REL_LOCATION      0x168    // SceneComponent
+COMPONENT_TW      0x210    // mesh quat (x,y,z,w)
+PLAYERSTATE       0x390    // Pawn
+PLAYERNAME        0x478    // PlayerState FString
+CAMP              0x670    // PlayerState team id (0 = local?)
+TEAMID            0x66C    // PlayerState squad slot
+IS_BOT            0x39E
+CAM_CACHE         0x30870  // CameraManager (kandidat POV)
+CONTROL_ROT       0x3D8    // PlayerController
+ROTATION_INPUT    0x570    // PlayerController
 ```
 
-Yang sudah dicoba dan **bukan** solusi:
-- `RootComponent + 0x210/0x220` (ComponentToWorld) → garbage.
-- `AActor::ReplicatedMovement` 0xA4/0x98/0x78 → bukan world pos.
-- `CharacterMovement + 0x2B0` (LastUpdateLocation) → pointer movement kebanyakan 0.
-- `PlayerArray` di GameState+0x3A0/0x398 → count/ptr tidak valid (GameState build ini beda).
-- Scan seluruh aktor 0..0x800 untuk triplet posisi → tidak konsisten (hanya +0x7B0 milik sebagian aktor).
+**Mesh/bone (verified live)**
 
-Jalur yang belum ditempuh:
-1. **ACE decrypt** ala UC (ACEList + Ymm15Key + DecryptXorRol + hash lookup slot) — lihat `references/uc-ace.md` (belum ditulis) / thread UC "Delta Force ACE decryption".
-2. Cari **cache posisi decrypted** milik renderer/HUD (screen-space nameplate).
-3. HUD nameplate hunt: `BP_Breakthrough_Hud_C` (PC+0x400) di-scan 0..0x4000 **tidak** menemukan widget class mengandung Nameplate/Marker/Indicator.
+```
+pawn + 0x3D0                -> USkeletalMeshComponent*
+mesh  + 0x760               -> bone array ptr, count +0x768, stride 0x30
+bone  + 0x10                -> local position (x,y,z)
+mesh  + 0x210 / 0x220       -> component quat / translation (world = quat*local + trans)
+mesh  + 0xEB0               -> SkeletalMesh asset
+asset + 0x60                -> Skeleton
+skeleton + 0x38             -> BoneTree (cnt +0x40 = 75) — **STRIPPED** (FName=0, parent=-1)
+mesh bone count             = 80 (5 extra vs skeleton)
+```
+
+**Bone index map** (dari posisi world; skeleton di-strip):
+
+| idx | bagian |
+|---|---|
+| 0 | root |
+| 1 | pelvis |
+| 2–4 | spine_01..03 |
+| 5 | neck |
+| 31/32 | head |
+| 6–9 | clav/upper/lower/hand **L** |
+| 33–36 | clav/upper/lower/hand **R** |
+| 58–61 | thigh/calf/foot/ball **L** |
+| 62–65 | thigh/calf/foot/ball **R** |
+| 66–79 | duplikat/extra mesh (root/arm/foot) |
 
 ---
 
-## 6. Open concerns (handoff — belum selesai)
+## 4. Core (`core.cpp`)
 
-1. **Kamera asli tidak terbaca.** PlayerCameraManager stub; POV template; CameraCache/ViewTarget nol. Butuh view matrix renderer atau POV asli.
-2. **FOV ADS per-optic tidak diketahui.** 1.5x/4x beda; fovAds manual belum cukup.
-3. **Third-person / vehicle / deathcam / top-down** tidak punya kamera; ESP hanya masuk akal di first-person hipfire.
-4. **Posisi aktor jauh terenkripsi** (REL garbage) → musuh jauh tidak punya box.
-5. **ACE transform decryption** belum diimplementasikan (UC method). Ini jalan paling lengkap tapi berat.
-6. **Nameplate HUD screen-space** belum ditemukan; kalau ketemu, ESP jadi bebas kamera/zoom.
-7. **bot flag salah.** Semua player `bot=1` (offset 0x39E tidak valid) → warna box semua abu-abu. Perlu offset flag bot yang benar atau buang flag.
-8. **Semantik camp/team belum pasti.** local camp=1/2, team=1..4; camp=1/2 kemungkinan faksi, team=1..4 squad. Filter tim harus dikalibrasi di match.
-9. **selfDead flag tidak reliabel.** `ps+0x4B4` sering 0 walau downed/deathcam → draw loop tetap jalan, tapi kamera salah.
-10. **BlackBoard pawn** (`+0xE70`) null → zoom/weapon/firing tidak terbaca.
-11. **DF-MENU manual-map** gagal `err=5` di beberapa state; `dfsecinject` (section+APC) yang dipakai. Manual-map butuh perbaikan ACL/step.
-12. **Banyak instance core** (V9/V10/V11/V12) bisa ter-map sekaligus, masing-masing punya shm sendiri. Perlu cleanup sebelum build baru (restart game paling bersih).
-13. **Kalibrasi key global tidak jalan** (game raw input). Kalibrasi lewat file `camcfg.txt`; jangan andalkan GetAsyncKeyState.
-14. **Timing screenshot vs shm** bisa beda 1-3 detik; jangan simpulkan box hilang dari satu screenshot.
-15. **Belum diuji di match penuh** dengan kalibrasi final; hasil terakhir masih iteratif.
+- **Refresh** (Worker): `GetWorld` → level/`GI` → LocalPlayer/PC/pawn → kamera:
+  - mode 1: kandidat POV (`cam+0x2C5E0`, `cam+CAM_CACHE`, `cam+0x2DEC0`, `cam+0x2DEF0`, `cam+0x2F310`)
+  - mode 2: fallback `controlRot` + head localPawn (yang dipakai sekarang; camFov=90)
+  - mode 4: auto-scan POV (hanya kalau camMode==0; saat ini tidak jalan)
+- **Player scan**: persistent level + **semua level** (`World+0x158` Levels): class `Character`/`Pawn`/`RangeTarget`/`TargetDummy`/`Dummy`; `PlayerState` opsional; dedup; max 128; `FillBones`; nama/`camp`/`team` dari PS.
+- **Publish**: `SharedState` V30 tiap **Sleep(10)**.
+- **AimLoop** (8ms): baca `AimCmd` (absolute), delta terhadap `CONTROL_ROT`, normalize ±180, clamp `maxStep` (+jitter ±0.02, deadzone 0.1°, 1/32 skip) → `ROTATION_INPUT` (mode 0). Tidak menulis `ControlRotation` (mode 1 ada tapi overlay pakai 0).
+- **PollKeys** (8ms): INSERT bit1, F8 bit2, HOME bit4, Ctrl+Alt+M bit8 → `keyEdges/keySeq`.
+- **KeyTest** (`keytest.flag`): inject INSERT via `keybd_event` untuk tes hotkey.
+- **EnsureOverlay** (`start_overlay.flag`): `CreateProcess` overlay di session game (sekali per proses).
+- **AimCore legacy**: masih ada di core lama; V27+ tidak dipanggil. Overlay menulis MenuCfg aim=0 supaya tidak aktif.
 
 ---
 
-## 7. Referensi internet yang sudah dicek
+## 5. Overlay (`overlay_imgui.cpp`)
 
-- `heinocheat/Delta_Force_DMA_Cheat_AFG` (update 2026-10-22): offset international + skema decrypt `func_index/open_enc/enc_param`, fungsi 64-byte di `Base+0x12809790`, `AULevel ^= key`. **Offset tidak cocok** dengan build kita; skema decrypt ULevel menarik untuk diuji terpisah.
-- `heinocheat/Track_Cheat_ACE` (2026-09-22): riset SQ/GameCore/ACE boundary.
-- `dump_1.102.37100.16.5_sdk` (Downloads): SDK UE untuk layout struct.
-- `Delta Force by loli_[unknowncheats.me]_.zip` (Downloads): source lama, belum dianalisis.
-
----
-
-## 8. Build & probe yang ada
-
-- `core.cpp` / `overlay.cpp` / `shared.h`: produksi (SHM_V11).
-- `shmread.cpp`: dump shm (player, dbg actor, cam).
-- `dfsecinject.cpp`: injector section+APC (yang berhasil).
-- `dfrun.cpp`: manual-map (DF-MENU), bisa gagal err=5.
-- Probe: `dfoff2/dfoff3` (dual offset), `dfpov/dfpov2/dfcam/dfcam2/dfcam3` (kamera),
-  `dfchars/dfrep/dflast` (aktor/posisi), `dfsquad` (PlayerArray), `dfhud` (nameplate),
-  `dfzoom` (FOV/zoom), `dfctrl` (ControlRotation), `dfscan*`, `shot.cpp` (screenshot GDI+),
-  `sessrun.cpp` (launch di session console).
+- **shm scan**: `kName22..kName30`, `CreateFileMappingW` + `MapViewOfFile(size 0)`, validasi `magic==0x44464331 && 22<=version<=30 && state<=4 && 0<=playerCount<=128`; lock versi tertinggi; log `shm vXX state=.. players=..` di `ovimg.log`.
+- **Snapshot**: seqlock (`g_shm->seq`), copy `SharedState`.
+- **UpdatePrediction**: velocity kamera (`camRot/camLoc`) dan per-player dari snapshot sebelumnya; **EMA 0.65/0.35**; clamp rot 1.5°, pos 40 unit, pred maks 40ms → `g_draw`.
+- **W2S**: proyeksi pakai `camRot` + offset kalibrasi (`camZ`, `camFwd`, `yawOff`, `pitchOff`, `fovAdj`); **saat RMB (ADS) pakai slider `FOV ADS`** (default 67) supaya box tidak geser/zoom.
+- **DrawESP**: FOV circle **selalu**; loop player: `maxDist` (default 1000), team filter (default **off**), box/name/dist, skeleton pakai `bones[66+]` (spine/arms/legs/head), counter `DRAW ply/drawn/team/dist/off`.
+- **AimTick**: target head `bones[32]` di dalam FOV circle (`g_aimFov` px); switch delay 120ms; tulis `AimCmd` absolute.
+- **Menu**: checkbox ESP/Box/Name/Distance/Team filter/Body/skeleton, Aim assist (RMB), Auto aim, slider `Aim FOV px`, `Max step`, `FOV ADS`, `Max dist`, `Cam Z/FOV adj/Cam Fwd/Yaw/Pitch`, tombol `Calibrate (F9)`.
+- **Flags**: `menu.flag` (toggle menu), `aim2.flag` (auto aim test), `spawn_shot.flag` (spawn `shot.exe`), `start_overlay.flag` (core launch), `keytest.flag` (core inject INSERT).
+- **Logs**: `ovimg.log` — `shm vXX`, `STATE st/act/ply/cam/camp/team`, `DRAW`, `OPEN/CLOSE`, `hotkey: core-only`, `hook ok`.
 
 ---
 
-## 9. Risiko
+## 6. Aim assist (stealth path)
 
-- ACE aktif; injeksi section/APC dan akses baca bisa terdeteksi.
-- Semua uji dilakukan di akun Presiden. Tidak ada jaminan bebas ban.
-- Repo private; jangan dibuka publik.
+1. Overlay pilih target **head bone 32** yang proyeksinya di dalam circle `Aim FOV px` (default 320) — target di luar circle diabaikan.
+2. Overlay hitung sudut absolut `yaw = atan2(dy,dx)`, `pitch = atan2(dz,hypot(dx,dy))` dari `camLoc` ke head.
+3. `AimCmd {enable,yaw,pitch,maxStep,stamp,mode=0}`.
+4. Core `AimLoop`: delta ke `CONTROL_ROT`, clamp `maxStep` (slider `Max step`×10, 0.5–20°), jitter kecil, deadzone, tulis `ROTATION_INPUT`.
+5. Tidak ada snap besar (clamp), tidak menulis `ControlRotation` langsung, delay ganti target 120ms.
 
----
-
-## 10. Progres jalur "panggil W2S milik game" (2026-10-22)
-
-Tujuan: ganti W2S manual dengan `APlayerController::ProjectWorldLocationToScreen` /
-`UGameplayStatics::ProjectWorldToScreen` agar bebas kamera/zoom.
-
-Yang sudah didapat:
-```
-FName "ProjectWorldToScreen" = index 1531557 (0x175EA5)   [verified: dfname2 decode]
-UFunction kandidat (heap, alamat bisa berubah tiap run):
-  0x47E12A90  class=Function  thunk +0x1D0 = 0x153499960
-  0x486B32D0  class=Function  thunk +0x1D0 = 0x1509B9420
-Thunk 0x153499960 membaca 2 param lalu call 0x152AE4F80.
-Thunk 0x1509B9420 membaca 1 byte param lalu call 0x1509461DF.
-Keduanya BUKAN thunk static 4-param (Player, FVector&, FVector2D&, bool).
-```
-Probe baru:
-```
-dfgobj.cpp    scan FUObjectArray di section writable (belum ketemu)
-dfgobj2.cpp   scan pola mov reg,[rip+disp] + mov reg,[reg+idx*8] (belum ketemu)
-dfname.cpp    cari FName index via GNames blocks (wide/XOR)
-dfname2.cpp   decode nama sekitar index
-dfufunc*.cpp  scan heap UFunction + dump thunk/impl
-dfpath.cpp    path exe + cek PDB (tidak ada PDB)
-```
-Langkah berikutnya (belum):
-1. Cari FName index "GameplayStatics".
-2. Scan heap UClass bernama GameplayStatics (metaclass Class).
-3. Baca `Children` (UStruct) → rantai UField → temukan UFunction ProjectWorldToScreen
-   yang outer-nya GameplayStatics.
-4. Baca `Func` (+0x1D0) → thunk 4-param → call target C++.
-5. Panggil target dengan ABI: RCX=PC, RDX=&FVector, R8=&FVector2D, R9=bool.
-6. Bandingkan hasil dengan kamera manual; kalau cocok, ganti W2S overlay.
-Catatan: layout UObject build ini belum sepenuhnya terpetakan (Outer/Next/Name
-tumpang tindih dengan asumsi 0x18/0x1C/0x28), jadi validasi UClass wajib ketat
-(vtable di module, class=Function, metaclass=Class, region RW).
+Catatan: ini tetap memory-write di proses game; bukan jaminan anti-cheat. Tidak ada aim through wall check (LOS) — semua target dalam circle.
 
 ---
 
-## 11. W2S engine — hasil probe terbaru (2026-10-22)
+## 7. Build
 
+Prasyarat: **VS2022 BuildTools** (`vcvars64.bat`), Windows SDK. **Dear ImGui** harus ada di folder `imgui/` (dengan `backends/`). Di build dir `C:\Users\User\trackA`:
+
+```bat
+call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+cl /nologo /std:c++17 /O2 /EHsc /DSHM_V30 /D_USRDLL /D_WINDLL core.cpp /Fe:dfcore30.dll /link /DLL user32.lib
+cl /nologo /std:c++17 /O2 /EHsc /I imgui /I imgui\backends overlay_imgui.cpp imgui\imgui.cpp imgui\imgui_draw.cpp imgui\imgui_tables.cpp imgui\imgui_widgets.cpp imgui\backends\imgui_impl_win32.cpp imgui\backends\imgui_impl_dx11.cpp /Fe:dfimgui_overlay_multi.exe /link d3d11.lib dxgi.lib d3dcompiler.lib user32.lib gdi32.lib /SUBSYSTEM:WINDOWS
 ```
-UClass "GameplayStatics"  = heap, class name index 1530756
-  Children offset          = +0x58 (rantai UField via +0x28)
-  ProjectWorldToScreen     = UFunction di rantai children
-UFunction PWS:
-  NumParams        = 5        (bytes +0xB8: 05 00)
-  ParamSize        = 0x1E     (+0xBA)
-  ReturnValueOffset= 0x1D     (+0xBC)
-  Layout params:
-    0x00 APlayerController* Player
-    0x08 FVector WorldPosition (3 float)
-    0x14 FVector2D ScreenPosition (2 float)
-    0x1C bool bPlayerViewportRelative
-    0x1D bool ReturnValue
-  Func (+0x1D0) = thunk (berubah tiap run; contoh 0x153499960)
-```
-Yang belum: alamat `UObject::ProcessEvent` (virtual) untuk memanggil UFunction
-dengan param buffer di atas. Vtable PC sudah di-dump 0x38..0x58 (dfvt.cpp),
-belum ada entry yang jelas memanggil Func +0x1D0; kandidat ProcessEvent perlu
-diverifikasi dengan disasm (call `[reg+0x1D0]` / mov+call).
-Probe: dfgs/dfgs2 (GameplayStatics), dfpws (metadata), dfpe/dfpe2/dfvt (vtable),
-dfcomp (komponen pawn), dfname/dfname2 (FName).
+
+`build30.bat` di repo menjalankan keduanya. `setup_imgui.ps1` meng-clone Dear ImGui ke `imgui/`.
 
 ---
 
-## 12. Fix team flag & robustness (V14, 2026-10-22)
+## 8. Deploy
 
-Field team yang BENAR di PlayerState (build 1.14.0.772):
+**Inject (SYSTEM, early)** — user SSH tidak punya hak `MapViewOfFile` (0xC0000022):
+```bat
+schtasks /create /tn dfa_inj /tr "C:\Users\User\trackA\injsys.bat" /sc once /st 23:59 /ru SYSTEM /rl HIGHEST /f
+schtasks /run /tn dfa_inj
 ```
-ps+0x680 = 1 -> friendly (satu tim dengan local)
-ps+0x680 = 0 -> enemy
-ps+0x66C = squad slot 1..4 (BUKAN faction)
-ps+0x670 = camp 1/2 (BUKAN faction; teammate bisa 1 atau 2)
-ps+0x658=102 & ps+0x65C=10 -> penanda lain (bukan team)
+`injsys.bat` = `dfsecinject.exe <PID> dfcore30.dll > inj30.log 2>&1`.
+
+**Watcher** (inject begitu game start): `watch_inject.bat` loop `tasklist` cari `DeltaForceClient-Win64-Shipping.exe`, lalu inject; jalankan via schtasks SYSTEM.
+
+**Overlay**:
+- `StartOverlay.bat`: kill overlay, copy `dfimgui_overlay_multi.exe` → `dfimgui_overlay.exe`, start.
+- atau flag `start_overlay.flag` → core `EnsureOverlay` launch overlay di session game (sekali per proses).
+- `sessrun.exe` bisa gagal `WTSQueryUserToken 1314`; cara paling andal: core (in-game) atau user double-click.
+
+**Verifikasi**:
 ```
-Local: ps+0x680 = 1. Filter enemy-only: skip `p.camp == st.localCamp`.
-Core V14 membaca `p.camp = *(ps+0x680)` dan `p.team = *(ps+0x66C)`.
-Perubahan lain V13/V14:
-- `bot=0` (offset 0x39E salah, semua bot=1).
-- PosOK: |x|,|y|<400000, |z|<20000.
-- Stability: tolak lompatan posisi >30m antar frame (junk).
-- Overlay: box jauh tetap digambar (dot 4px bila h<4), warna merah enemy / cyan friendly,
-  name+dist on, team filter on, debug default off.
-Bukti shm V14:
-```
-localCamp=1; p0 depzaivc camp=1 (skip); p2 Marsellio camp=0 (draw); p5 EscapePod camp=0 (draw)
+ovimg.log : shm v30 state=1 players=N
+           STATE st=1 act=... ply=... camp=... team=...
+           DRAW ply=.. drawn=.. team=0 dist=0 off=0 maxd=1000 tf=0
+inj30.log : map game st=0x00000000 ... loader_status=1
+aim.log  : AIM tgt=.. cur=(pitch,yaw) want=(pitch,yaw) d=(0,0)
+           APPLY dY=.. dP=.. ctrl=(pitch,yaw)
 ```
 
 ---
 
-## 13. KOREKSI: faction = ps+0x660 (V15)
+## 9. Anti-cheat / batasan (penting)
 
-§12 salah: `ps+0x680` adalah **flag squad** (1 = 4 orang squad lokal), bukan faction.
-Field faction yang benar:
-```
-ps+0x660 = match team id  (0 = tim lokal; musuh 2..15)
-ps+0x66C = squad slot 1..4
-ps+0x680 = 1 jika squad lokal (MybeautifulM4, caubachacu, depzaivc, Escanor)
-ps+0x670 = camp 1/2 (bukan faction)
-```
-Bukti probe dfteam (satu match):
-```
-MybeautifulM4 660=0 66C=3 680=1   (self)
-caubachacu    660=0 66C=1 680=1   (squad)
-depzaivc12354 660=0 66C=1 680=1   (squad)
-Escanor2442   660=0 66C=1 680=1   (squad)
-HddCREW       660=12 66C=3 680=0  (musuh)
-Marsellio     660=10 66C=3 680=0  (musuh)
-yyChiiiiillsxx 660=5 66C=2 680=0  (musuh)
-```
-Core V15: localCamp = *(ps+0x660); p.camp = *(ps+0x660); p.team = *(ps+0x66C).
-Overlay: enemy-only = skip `p.camp == localCamp`.
-Hasil screenshot V15: label/box hanya DivineSafekey, VIPERALI, Powking,
-FeralCommando (musuh); Escanor/caubachacu/depzaivc (squad) bersih.
-Catatan: overlay bisa capture `snap.txt` (cam+players) sinkron dengan screen.bmp
-lewat event F8 in-game (core keyEdges), untuk validasi W2S tanpa timing skew.
+- Injeksi pertama di proses game berhasil (`map game st=0`, `loader_status=1`). Injeksi berikutnya sering **`MapViewOfFile` 0xC0000022** (manual map diblok). Strategi: **inject awal** via watcher SYSTEM saat game baru start.
+- `taskkill` game bisa dilaporkan sukses tapi proses tetap/protected; restart game lewat launcher `D:\Delta Force\Delta Force\DeltaForceClient.exe`.
+- Overlay **harus di session 1** (session game); proses dari SSH/session 0 tidak terlihat dan shm-nya beda namespace. Core `EnsureOverlay`/user StartOverlay adalah jalur yang benar.
+- `shot.exe` menangkap **frame game** (PrintWindow), **bukan layered overlay**; screenshot overlay butuh desktop capture (`GetDC(NULL)`/BitBlt) di session 1.
+- `camMode=2` (controlRot + head) bukan POV kamera sebenarnya; ADS/zoom dan recoil bisa bikin box geser/getar. POV sesungguhnya (CameraCache) belum ketemu; auto-scan mode 4 di-skip saat fallback aktif.
+- BoneTree **stripped** (nama/parent -1); mapping dari posisi world.
+- PlayerState `camp/team` offset 0x670/0x66C bisa berbeda antar mode; default team filter overlay **off** + maxDist 1000 supaya semua player kelihatan.
 
-## 14. Synchronized capture (untuk kalibrasi W2S)
-- Overlay15b: jika file `C:\Users\User\trackA\capture.flag` ada, overlay memanggil
-  CaptureBmp(&st) lalu menghapus flag. Output: `screen.bmp` + `snap.txt`
-  (CAM x y z pitch yaw roll fov valid; P name camp team x y z dist).
-- Trigger dari Linux: `echo. > capture.flag`, tunggu 1s, tarik snap.txt + screen.bmp.
-- Terbukti: snap berisi CAM + 17 player, sinkron dengan BMP.
-- Catatan: kalau frame berupa tactical map / deathcam, kamera pawn tidak berlaku;
-  kalibrasi hanya valid saat gameplay first-person.
+---
 
-## 15. BODY / SKELETON OFFSETS (V16, verified in training factory)
-SDK + live probe (BP_DFMCharacter_SafeHouse_C):
-```
-actor+0x3D0  = Mesh (DFMSkeletalMeshComponent*)
-mesh+0x760   = TArray<FTransform> BoneArray (animated, component-space)
-               ptr @+0, count @+8, max @+0xC; stride 0x30
-               local player: cnt=80; other body: cnt=75
-mesh+0x210   = ComponentToWorld (FTransform: quat @+0, trans @+0x10)
-mesh+0x9F8   = CachedBoneSpaceTransforms (SDK; often zero)
-mesh+0xA08   = CachedComponentSpaceTransforms (SDK; not used by this class)
-mesh+0xEB0   = SkeletalMesh asset
-```
-Live sample (local, feet CTW z=5.5):
-```
-B0 t=(0,-15,0)          root
-B1 t=(-0.6,-14.9,86.7)  pelvis
-B2 t=(-0.6,-14.9,94.0)
-B3 t=(-1.0,-13.3,108.6)
-B4 t=(-1.3,-9.6,121.9)
-B5 t=(-5.7,-3.5,136.8)  chest
-B6.. arms (x -21..-30)
-```
-World = CTW.TransformPosition(local). Pelvis world z 92.2 vs pawn z 91.5 (capsule center).
-V16: core fills 16 bones (head/neck/chest/pelvis/shoulders/elbows/hands/hips/knees/feet)
-by z-fraction/x-side selection; overlay draws skeleton lines (menu `body 1`) with the
-`team 1` filter = enemy only, `team 0` = all (friend+enemy).
-Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pemain/bot lain.
+## 10. Known issues / next steps
 
-## 16. V17: single-core shm + range target
-- Blink disebabkan 3 core V16 (16/16b/16c) menulis shm V16 yang sama -> list target/bone
-  bergantian tiap frame. V17 memakai nama shm baru; hanya core17 yang menulis.
-- Range target `BP_RangeTargetCharacter_C` ada di sublevel (world+0x158 Levels array),
-  bukan persistent level. Core17 scan semua level, masukkan target (camp=-1, name Target).
-- Bone target valid: head z=182.7, neck 163.8, chest 138.0, pelvis 106.5,
-  shoulders 137.9, hands 113.1, hips 105.0, knees 63.1, feet 13.5 (base 12.0).
-- CTW target mesh+0x210 t=(29665.2,28974.7,12.0) -> world bone = CTW * local.
+1. **POV kamera**: cari `CameraCachePrivate.POV` yang benar (loc/rot/FOV) supaya W2S presisi saat ADS/recoil; auto-scan jangan di-skip saat camMode 2.
+2. **Mesh chams**: overlay hanya skeleton; body/mesh 100% butuh hook renderer (D3D12) atau menggambar mesh dari vertex buffer.
+3. **Player scan**: semua level + Character/Pawn sudah; kalau ada mode dengan class lain, tambah substring.
+4. **Injection**: watcher awal vs AC; jangan inject berulang ke proses yang sama (duplikat Worker/shm).
+5. **Old cores**: V23–V29 bisa masih hidup di proses yang sama; overlay prefer V30. Restart game untuk bersih.
+6. **Screenshot**: tambah desktop capture di overlay (flag) untuk bukti visual ESP.
+7. **Aim**: LOS/visibility check, per-weapon FOV ADS, humanization lebih halus.
 
-## 17. Deploy bersih V17
-- `run_v17.bat`: kill overlay17, inject `dfcore17.dll` (PID 33172), start `dfoverlay17.exe`.
-- Verifikasi stabilitas: 3 snap berurutan identik (5 target, 16 bone, posisi sama) -> blink hilang.
-- Bone names di cooked build = None (FName stripped); parent index tetap ada, tapi mapping
-  nama tidak bisa. Skeleton 16 titik tetap pakai z-fraction + x-side.
-- CameraManager `BP_TestPlayerCameraManager_C` CameraCache (0x3E0) = 0 di SafeHouse;
-  kamera pakai ControlRotation + pawn+64 (mode 2). Kalibrasi W2S hanya bisa dari target
-  yang terlihat (butuh ground truth mata user).
+---
 
-## 18. V18: kamera head bone
-- Mode-2 camera sekarang pakai head bone lokal (mesh+0x760, world z~161.9) - 10,
-  bukan pawn+64. CAM z 151.9 (sebelumnya 155.5).
-- Proyeksi target pertama (29665,28974) jatuh di pintu (x~1023,y 454-647);
-  target itu memang di balik pintu/tembok -> wallhack skeleton melalui dinding.
-- Mannequin putih di balik pagar bukan target tracked (prop statis / bukan
-  BP_RangeTargetCharacter di list).
+## 11. File map
 
-## 19. V18b: body independen dari ESP
-- Sebelumnya `if (!g_esp) continue;` mematikan body juga.
-- Sekarang: `if (!g_esp && !g_body) continue;`; body digambar dulu, baru box/name/dist
-  hanya jika g_esp. Toggle `esp 0` + `body 1` = wallhack body saja.
-- Runbook: `run_v18.bat`.
+| File | Isi |
+|---|---|
+| `core.cpp` | core DLL V30 (Refresh, player scan, AimLoop, PollKeys, EnsureOverlay, legacy AimCore) |
+| `shared.h` | SharedState/SPlayer/AimCmd/MenuCfg + nama shm V22–V30 |
+| `overlay_imgui.cpp` | overlay multi V22–V30 (scan, W2S, ESP, prediksi, ADS, AimTick, menu) |
+| `Offsets.hpp` | UEOffsets (UE5 SDK: FNamePool, UObject, dll) |
+| `build30.bat` | build core30 + overlay multi |
+| `StartOverlay.bat` | kill overlay → copy multi → start |
+| `watch_inject.bat` | watcher SYSTEM: tunggu shipping exe → inject core30 |
+| `injsys.bat` / `inj30.bat` | injector satu kali |
+| `setup_imgui.ps1` | clone Dear ImGui ke `imgui/` |
+| `dist/` | binary siap pakai: `dfcore30.dll`, `dfimgui_overlay_multi.exe`, `dfsecinject.exe`, `sessrun.exe`, `shot.exe`, `restart_helper.exe` |
+| `docs/HANDOFF-history-core11.md` | handoff lama (core11, offset awal, riset) |
+| `shot.cpp`/`sessrun.cpp`/`restart_helper.cpp`/`gamestart.cpp` | source tool |
 
-## 20. V19: hide di menu + bukti visual
-- `bShowMouseCursor` PC+0x588 / `bPlayerIsWaiting` PC+0x520 -> st.selfDead=1,
-  overlay berhenti menggambar (hide saat menu/squad/waiting).
-- Di training gameplay dead=0; screenshot terakhir menunjukkan beberapa skeleton cyan
-  di target jarak jauh (Target 58m) — body wallhack bekerja di gameplay.
-- Runbook final: `run_v19.bat` (core19 + overlay19).
+---
 
-## 21. Body render: silhouette proporsional (ganti stick skeleton)
-- Skeleton 16-bone dari z-fraction bentuknya jelek (torso jadi segitiga) karena bone
-  selection noise. Diganti silhouette proporsional tetap:
-  head circle, torso trapesium (shoulder 0.17h, hip 0.115h), tangan 2 segmen,
-  kaki 2 segmen; titik head dari bone0, feet dari bone14; fallback pos+72.
-- Warna: musuh merah, kawan cyan, target netral kuning; fill alpha 0.30 + outline.
-- `body 1` = silhouette ini (tembus dinding).
+## 12. Riwayat singkat
 
-## 22. Gaya A: chams filled + glow
-- Glow pass: outline torso 5.5px + circle head +3.5px + limb thick*2.1, alpha 0.20.
-- Core pass: fill alpha 0.55, outline 1.6px.
-- Warna musuh merah, kawan cyan, target netral kuning.
-- Screenshot: target di pintu tampil sebagai body kuning isi penuh + halo.
-
-## 23. Menu ImGui (GitHub ocornut/imgui)
-- Source: https://github.com/ocornut/imgui (lihat `fetch_imgui.sh`).
-- `menu_imgui.cpp`: D3D11 offscreen render -> staging readback -> DIB ->
-  `UpdateLayeredWindow` (layered, topmost, per-pixel alpha). Window swapchain biasa
-  TIDAK muncul di atas game; layered+UpdateLayeredWindow HARUS (sama seperti overlay).
-- Menu: ESP/box/name/dist/team/body, aim assist + FOV/step, camZ/fovAdj/fovAds, maxDist.
-  Setting ditulis live ke shm `DFC6_menu_v1` (MenuCfg); overlay membaca tiap frame
-  (`SyncMenu`), menu D2D lama dimatikan.
-- INSERT = hide/show menu. Klik menu untuk fokus.
-- Runbook: `run_v20.bat` (menu ImGui + overlay19).
-
-## 24. Overlay ImGui penuh (ESP + menu) + kalibrasi
-- `overlay_imgui.cpp` -> `dfimgui_overlay.exe`: satu proses ImGui, layered full-screen
-  (D3D11 -> staging -> DIB -> UpdateLayeredWindow). Menggantikan dfoverlay19 + menu_imgui.
-- ESP/chams digambar via ImDrawList (AddRect/AddText/AddConvexPolyFilled/AddLine/AddCircle).
-- Hotkey: RegisterHotKey + WH_KEYBOARD_LL untuk INSERT (toggle menu).
-  Saat menu buka: WS_EX_TRANSPARENT dilepas, ShowCursor(TRUE), SetForegroundWindow.
-- Kalibrasi akurasi: F9 / tombol "Calibrate" -> ambil target terdekat crosshair,
-  hitung dyaw/dpitch dari proyeksi, set g_yawOff/g_pitchOff. Slider Cam Z/Cam Fwd/
-  FOV adj/Yaw/Pitch untuk tuning manual.
-- Runbook: `run_v21.bat`.
-
-## 25. Kalibrasi F9 lengkap
-- Calibrate(): target terdekat crosshair -> 
-  1) FOV dari tinggi body: Hp_px = scale * Hw_world / dist -> scale -> fov;
-     set g_fovAdj (clamp 30..140).
-  2) yaw/pitch offset dari proyeksi chest ke center (pakai FOV baru).
-- Slider manual: Cam Z, Cam Fwd, FOV adj, Yaw offset, Pitch offset.
-- Hotkey: WH_KEYBOARD_LL + RegisterHotKey INSERT; F9 = calibrate.
-- Menu buka: WS_EX_TRANSPARENT dilepas + ShowCursor(TRUE) + SetForegroundWindow.
+- Core11: ESP dasar, player count 39–44, posisi jauh corrupt, kamera aproksimasi.
+- V19–V22: ImGui overlay, skeleton 16-bone → semua bone (V22), bone dump (BoneTree stripped).
+- V23–V26: AimCmd absolute, MenuCfg, hotkey via core, keytest.
+- V27–V29: aim stealth (ROTATION_INPUT), FOV circle, prediksi overlay, publish 10ms.
+- V30: fix player scan mode match (semua level + Character/Pawn + PS opsional), overlay multi scan V22–V30, DrawESP pakai `g_draw`, FOV circle selalu, team filter off, maxDist 1000, draw counter.
