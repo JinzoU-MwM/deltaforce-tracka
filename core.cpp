@@ -58,7 +58,7 @@ static uintptr_t DPtr(uint64_t raw) { return (uintptr_t)(raw & 0xFFFFFFFFFFFFULL
 static bool FiniteF(float v) { return v == v && v > -1e18f && v < 1e18f; }
 static bool PosOK(const SVec3& p) {
     return FiniteF(p.x) && FiniteF(p.y) && FiniteF(p.z) &&
-           fabsf(p.x) < 1.0e6f && fabsf(p.y) < 1.0e6f && fabsf(p.z) < 1.0e6f &&
+           fabsf(p.x) < 400000.f && fabsf(p.y) < 400000.f && fabsf(p.z) < 20000.f &&
            (p.x * p.x + p.y * p.y) > 1.0f;
 }
 
@@ -219,7 +219,7 @@ static void Refresh(SharedState& st) {
         }
         if (ValidPtr(localPawn)) {
             uintptr_t ps = DPtr(R<uint64_t>(localPawn + off::PLAYERSTATE));
-            if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + off::CAMP); st.localTeam = R<int32_t>(ps + 0x66C); st.selfDead = R<uint8_t>(ps + 0x4B4) ? 1 : 0; }
+            if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + 0x680); st.localTeam = R<int32_t>(ps + 0x66C); st.selfDead = 0; }
             uintptr_t r0 = DPtr(R<uint64_t>(localPawn + off::ROOT_COMP));
             if (ValidPtr(r0)) {
                 SVec3 ctw = R<SVec3>(r0 + off::COMPONENT_TW + 0x10);
@@ -283,6 +283,8 @@ static void Refresh(SharedState& st) {
     if (cnt < 0 || cnt > 200000) cnt = 0;
     st.actorCount = cnt;
 
+    struct Stab { uintptr_t pawn; SVec3 pos; int seen; };
+    static Stab stab[256] = {};
     int n = 0;
     for (int32_t i = 0; i < cnt && ValidPtr(arr); ++i) {
         uintptr_t a = R<uintptr_t>(arr + (uint64_t)i * 8);
@@ -313,6 +315,17 @@ static void Refresh(SharedState& st) {
             SContains(cn, "MapRandom") || SContains(cn, "Pickup") || SContains(cn, "Item") || SContains(cn, "Default__")) continue;
         if (a == localPawn) continue;
         if (n >= 128 || !posOK) continue;
+        {
+            Stab* slot = nullptr;
+            for (int si = 0; si < 256; ++si) { if (stab[si].seen && stab[si].pawn == a) { slot = &stab[si]; break; } if (!stab[si].seen) { slot = &stab[si]; break; } }
+            if (slot) {
+                if (slot->seen) {
+                    float ddx = pos.x - slot->pos.x, ddy = pos.y - slot->pos.y, ddz = pos.z - slot->pos.z;
+                    if ((ddx*ddx + ddy*ddy + ddz*ddz) > 9.0e6f) continue; // >30m jump: junk
+                }
+                slot->pawn = a; slot->pos = pos; slot->seen = 1;
+            }
+        }
         uintptr_t ps = DPtr(R<uint64_t>(a + off::PLAYERSTATE));
         if (!ValidPtr(ps)) continue;
         SPlayer& p = st.players[n];
@@ -321,11 +334,9 @@ static void Refresh(SharedState& st) {
             ReadFStringToBuf(ps + off::PLAYERNAME, p.name, 64);
             if (!p.name[0]) ReadFStringToBuf(ps + 0x488, p.name, 64);
             if (SContains(p.name, "BP_") || SContains(p.name, "PropertyReplication") || SContains(p.name, "Default__")) p.name[0] = 0;
-            int c1 = R<int32_t>(ps + off::CAMP), c2 = R<int32_t>(ps + 0x680);
-            int t1 = R<int32_t>(ps + 0x66C), t2 = R<int32_t>(ps + 0x67C);
-            p.camp = (c1 >= 0 && c1 < 1000) ? c1 : c2;
-            p.team = (t1 >= 0 && t1 < 1000) ? t1 : t2;
-            p.bot = R<uint8_t>(ps + off::IS_BOT) != 0;
+            p.camp = R<int32_t>(ps + 0x680);   // 1 = friendly, 0 = enemy
+            p.team = R<int32_t>(ps + 0x66C);   // squad slot 1..4
+            p.bot = 0;
         }
         p.pos = pos;
         if (st.camValid) {

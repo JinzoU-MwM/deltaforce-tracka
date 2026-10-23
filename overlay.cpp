@@ -160,7 +160,7 @@ static bool W2S(const SharedState& st, const V3& wp, float& sx, float& sy, int W
 }
 
 // ---- ui ------------------------------------------------------------------
-static bool g_menu = true, g_esp = true, g_boxes = true, g_names = false, g_dist = false, g_team = false;
+static bool g_menu = true, g_esp = true, g_boxes = true, g_names = true, g_dist = true, g_team = true;
 static int g_sel = 0;
 static bool g_debug = false;
 static float g_maxDist = 400.f;
@@ -352,7 +352,7 @@ static void DrawFrame(SharedState st, int W, int H) {
         for (int i = 0; i < st.playerCount; ++i) {
             const SPlayer& p = st.players[i];
             if (p.dist > g_maxDist) continue;
-            if (g_team && ((st.localTeam >= 0 && p.team == st.localTeam) || (st.localCamp >= 0 && p.camp == st.localCamp))) continue;
+            if (g_team && st.localCamp >= 0 && p.camp == st.localCamp) continue;
             float fx, fy, hx, hy;
             V3 feet{ p.pos.x, p.pos.y, p.pos.z };
             V3 head{ p.pos.x, p.pos.y, p.pos.z + 72.f };
@@ -360,10 +360,11 @@ static void DrawFrame(SharedState st, int W, int H) {
             if (!W2S(st, head, hx, hy, W, H)) continue;
             if (!g_esp) continue;
             float h = fy > hy ? fy - hy : hy - fy;
-            if (h < 4.f || h > H) continue;
+            if (h > H) continue;
             float bw = h * 0.45f;
-            D2D1::ColorF col = p.bot ? D2D1::ColorF(0.6f, 0.6f, 0.6f) : D2D1::ColorF(1.f, 0.25f, 0.25f);
-            if (g_boxes) Rect(fx - bw * 0.5f, hy, bw, h, col, 1.2f);
+            D2D1::ColorF col = (st.localCamp >= 0 && p.camp >= 0 && p.camp != st.localCamp) ? D2D1::ColorF(1.f, 0.25f, 0.25f) : D2D1::ColorF(0.2f, 0.8f, 1.f);
+            if (h < 4.f) { Rect(hx - 2.f, hy - 2.f, 4.f, 4.f, col, 1.f); continue; }
+            if (g_boxes) Rect(fx - bw * 0.5f, hy, bw, h, col, 1.6f);
             if (g_names) Text(fx - bw * 0.5f, hy - 15.f, p.name, col, 12.f);
             if (g_dist) { char b[32]; wsprintfA(b, "%dm", (int)p.dist); Text(fx - bw * 0.5f, hy - 1.f, b, D2D1::ColorF(0.9f, 0.9f, 0.6f), 11.f); }
         }

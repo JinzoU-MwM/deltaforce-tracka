@@ -240,3 +240,28 @@ belum ada entry yang jelas memanggil Func +0x1D0; kandidat ProcessEvent perlu
 diverifikasi dengan disasm (call `[reg+0x1D0]` / mov+call).
 Probe: dfgs/dfgs2 (GameplayStatics), dfpws (metadata), dfpe/dfpe2/dfvt (vtable),
 dfcomp (komponen pawn), dfname/dfname2 (FName).
+
+---
+
+## 12. Fix team flag & robustness (V14, 2026-10-22)
+
+Field team yang BENAR di PlayerState (build 1.14.0.772):
+```
+ps+0x680 = 1 -> friendly (satu tim dengan local)
+ps+0x680 = 0 -> enemy
+ps+0x66C = squad slot 1..4 (BUKAN faction)
+ps+0x670 = camp 1/2 (BUKAN faction; teammate bisa 1 atau 2)
+ps+0x658=102 & ps+0x65C=10 -> penanda lain (bukan team)
+```
+Local: ps+0x680 = 1. Filter enemy-only: skip `p.camp == st.localCamp`.
+Core V14 membaca `p.camp = *(ps+0x680)` dan `p.team = *(ps+0x66C)`.
+Perubahan lain V13/V14:
+- `bot=0` (offset 0x39E salah, semua bot=1).
+- PosOK: |x|,|y|<400000, |z|<20000.
+- Stability: tolak lompatan posisi >30m antar frame (junk).
+- Overlay: box jauh tetap digambar (dot 4px bila h<4), warna merah enemy / cyan friendly,
+  name+dist on, team filter on, debug default off.
+Bukti shm V14:
+```
+localCamp=1; p0 depzaivc camp=1 (skip); p2 Marsellio camp=0 (draw); p5 EscapePod camp=0 (draw)
+```
