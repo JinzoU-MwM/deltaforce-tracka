@@ -794,6 +794,11 @@ static void Refresh(SharedState& st) {
 #endif
     st.pc = pc; st.localPawn = localPawn;
     st.camMode = camMode;
+    if (ValidPtr(pc)) {
+        uint8_t mouse = R<uint8_t>(pc + 0x588);
+        uint8_t waiting = R<uint8_t>(pc + 0x520);
+        if (mouse || waiting) st.selfDead = 1;
+    }
 #ifdef PROBE_ONLY
     { static bool g_bodyDumped = false;
       if (!g_bodyDumped && ValidPtr(localPawn)) { g_bodyDumped = true; DumpBody(localPawn); } }

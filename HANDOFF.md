@@ -363,3 +363,10 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
 - Sekarang: `if (!g_esp && !g_body) continue;`; body digambar dulu, baru box/name/dist
   hanya jika g_esp. Toggle `esp 0` + `body 1` = wallhack body saja.
 - Runbook: `run_v18.bat`.
+
+## 20. V19: hide di menu + bukti visual
+- `bShowMouseCursor` PC+0x588 / `bPlayerIsWaiting` PC+0x520 -> st.selfDead=1,
+  overlay berhenti menggambar (hide saat menu/squad/waiting).
+- Di training gameplay dead=0; screenshot terakhir menunjukkan beberapa skeleton cyan
+  di target jarak jauh (Target 58m) — body wallhack bekerja di gameplay.
+- Runbook final: `run_v19.bat` (core19 + overlay19).
