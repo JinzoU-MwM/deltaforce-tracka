@@ -10,3 +10,4 @@
 *.bin
 *.txt
 !camcfg.example.txt
+third_party/imgui/
