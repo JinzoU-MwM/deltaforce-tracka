@@ -340,3 +340,12 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
 - Bone target valid: head z=182.7, neck 163.8, chest 138.0, pelvis 106.5,
   shoulders 137.9, hands 113.1, hips 105.0, knees 63.1, feet 13.5 (base 12.0).
 - CTW target mesh+0x210 t=(29665.2,28974.7,12.0) -> world bone = CTW * local.
+
+## 17. Deploy bersih V17
+- `run_v17.bat`: kill overlay17, inject `dfcore17.dll` (PID 33172), start `dfoverlay17.exe`.
+- Verifikasi stabilitas: 3 snap berurutan identik (5 target, 16 bone, posisi sama) -> blink hilang.
+- Bone names di cooked build = None (FName stripped); parent index tetap ada, tapi mapping
+  nama tidak bisa. Skeleton 16 titik tetap pakai z-fraction + x-side.
+- CameraManager `BP_TestPlayerCameraManager_C` CameraCache (0x3E0) = 0 di SafeHouse;
+  kamera pakai ControlRotation + pawn+64 (mode 2). Kalibrasi W2S hanya bisa dari target
+  yang terlihat (butuh ground truth mata user).

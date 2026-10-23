@@ -182,6 +182,7 @@ static void ReadFStringToBuf(uintptr_t addr, char* out, int cap) {
 
 
 static void DumpBones(uintptr_t actor, FILE* f);
+static void DumpBoneNames(uintptr_t mesh, FILE* f);
 static void DumpBody(uintptr_t pawn) {
     FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\body.txt", "a");
     if (!f) return;
@@ -193,6 +194,7 @@ static void DumpBody(uintptr_t pawn) {
     if (ValidPtr(root)) ppos = R<SVec3>(root + off::REL_LOCATION);
     fprintf(f, "root=%p pos=(%.1f,%.1f,%.1f)\n", (void*)root, ppos.x, ppos.y, ppos.z);
     { char pc[104]; ClassNameToBuf(pawn, pc, 104); fprintf(f, "pawnClass=%s\n", pc); }
+    { static bool g_bn = false; if (!g_bn) { g_bn = true; uintptr_t mm = R<uintptr_t>(pawn + 0x3D0); if (ValidPtr(mm)) DumpBoneNames(mm, f); } }
     DumpBones(pawn, f);
     for (uint32_t o = 0x100; o <= 0xA00; o += 8) {
         uintptr_t p = DPtr(R<uint64_t>(pawn + o));
@@ -416,6 +418,36 @@ static void FindGObjectsAndDump() {
 
 
 
+
+static void DumpBoneNames(uintptr_t mesh, FILE* f) {
+    uintptr_t asset = R<uintptr_t>(mesh + 0xEB0);
+    if (!ValidPtr(asset)) { fprintf(f, "BONENAMES asset invalid\n"); return; }
+    uintptr_t skel = R<uintptr_t>(asset + 0x60);
+    if (!ValidPtr(skel)) { fprintf(f, "BONENAMES skel invalid asset=%p\n", (void*)asset); return; }
+    uintptr_t bt = R<uintptr_t>(skel + 0x38);
+    int32_t cnt = R<int32_t>(skel + 0x40);
+    fprintf(f, "BONENAMES asset=%p skel=%p tree=%p cnt=%d\n", (void*)asset, (void*)skel, (void*)bt, cnt);
+    if (!ValidPtr(bt) || cnt <= 0 || cnt > 500) return;
+    for (int i = 0; i < 32; ++i) {
+        uint32_t v = R<uint32_t>(bt + (uint64_t)i * 4);
+        fprintf(f, "  RAWBT %d 0x%08X\n", i, v);
+    }
+    for (int stride = 0x10; stride <= 0x18; stride += 8) {
+        for (int i = 0; i < 5; ++i) {
+            uint32_t nm = R<uint32_t>(bt + (uint64_t)i * stride);
+            int32_t par = R<int32_t>(bt + (uint64_t)i * stride + 8);
+            char nb[104]; FNameToBuf(nm, nb, 104);
+            fprintf(f, "  TRY st=0x%X i=%d nm=%u par=%d name=%s\n", stride, i, nm, par, nb);
+        }
+    }
+    for (int i = 0; i < cnt && i < 200; ++i) {
+        uint32_t nm = R<uint32_t>(bt + (uint64_t)i * 0x10);
+        int32_t par = R<int32_t>(bt + (uint64_t)i * 0x10 + 8);
+        char nb[104]; FNameToBuf(nm, nb, 104);
+        fprintf(f, "  BONE %d parent=%d name=%s\n", i, par, nb);
+    }
+}
+
 static void DumpBones(uintptr_t actor, FILE* f) {
     uintptr_t mesh = R<uintptr_t>(actor + 0x3D0);
     if (!ValidPtr(mesh)) return;
@@ -565,6 +597,67 @@ static void FillBones(SPlayer& p, uintptr_t actor) {
     p.boneCount = 16;
 }
 
+
+static void DumpCam(uintptr_t pc, uintptr_t cam, uintptr_t pawn) {
+    FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\body.txt", "a");
+    if (!f) return;
+    SRot ctrl = R<SRot>(pc + off::CONTROL_ROT);
+    SVec3 pp{};
+    uintptr_t root = DPtr(R<uint64_t>(pawn + off::ROOT_COMP));
+    if (ValidPtr(root)) pp = R<SVec3>(root + off::REL_LOCATION);
+    char ccn[104]; ClassNameToBuf(cam, ccn, 104);
+    fprintf(f, "CAMDBG pc=%p cam=%p class=%s pawn=%p ctrl=(%.2f,%.2f,%.2f) ppos=(%.1f,%.1f,%.1f)\n",
+            (void*)pc, (void*)cam, ccn, (void*)pawn, ctrl.pitch, ctrl.yaw, ctrl.roll, pp.x, pp.y, pp.z);
+    for (uint32_t o = 0x380; o < 0x480; o += 4) {
+        float v = R<float>(cam + o);
+        fprintf(f, "  RAW 0x%X %08X f=%.3f\n", o, *(uint32_t*)&v, v);
+    }
+    struct Cand { float score, dist, fov, pitch, yaw, lx, ly, lz; uint32_t off; };
+    Cand best[12] = {};
+    int nb = 0;
+    for (uint32_t o = 0; o + 0x28 <= 0x80000; o += 4) {
+        float lx = R<float>(cam + o), ly = R<float>(cam + o + 4), lz = R<float>(cam + o + 8);
+        float pitch = R<float>(cam + o + 0xC), yaw = R<float>(cam + o + 0x10), roll = R<float>(cam + o + 0x14);
+        float fov = R<float>(cam + o + 0x18);
+        if (!((lx==lx)&&(ly==ly)&&(lz==lz)&&(pitch==pitch)&&(yaw==yaw)&&(fov==fov))) continue;
+        if (!(fov > 20.f && fov < 160.f)) continue;
+        float dx = lx - pp.x, dy = ly - pp.y, dz = lz - pp.z;
+        float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        if (dist > 5000.f) continue;
+        float dyaw = fabsf(yaw - ctrl.yaw); if (dyaw > 180.f) dyaw = 360.f - dyaw;
+        float score = dist;
+        Cand c{ score, dist, fov, pitch, yaw, lx, ly, lz, o };
+        if (nb < 12) best[nb++] = c;
+        else {
+            int worst = 0; for (int i = 1; i < 12; ++i) if (best[i].score > best[worst].score) worst = i;
+            if (score < best[worst].score) best[worst] = c;
+        }
+    }
+    for (int i = 0; i < nb; ++i) {
+        Cand& c = best[i];
+        float dyaw = fabsf(c.yaw - ctrl.yaw); if (dyaw > 180.f) dyaw = 360.f - dyaw;
+        fprintf(f, "  POV off=0x%X dist=%.1f fov=%.2f rot=(%.2f,%.2f) dyaw=%.2f loc=(%.1f,%.1f,%.1f)\n",
+                c.off, c.dist, c.fov, c.pitch, c.yaw, dyaw, c.lx, c.ly, c.lz);
+    }
+    int nd = 0;
+    for (uint32_t o = 0; o + 0x30 <= 0x80000; o += 8) {
+        double lx = R<double>(cam + o), ly = R<double>(cam + o + 8), lz = R<double>(cam + o + 16);
+        float pitch = R<float>(cam + o + 0x18), yaw = R<float>(cam + o + 0x1C), roll = R<float>(cam + o + 0x20), fov = R<float>(cam + o + 0x24);
+        if (!((lx==lx)&&(ly==ly)&&(lz==lz)&&(pitch==pitch)&&(yaw==yaw)&&(fov==fov))) continue;
+        if (!(fov > 20.f && fov < 160.f)) continue;
+        if (!(fabsf(lx) < 400000.0) || !(fabsf(ly) < 400000.0)) continue;
+        double ddx = lx - pp.x, ddy = ly - pp.y, ddz = lz - pp.z;
+        double dist = sqrt(ddx*ddx + ddy*ddy + ddz*ddz);
+        if (dist > 5000.0) continue;
+        float dyaw = fabsf(yaw - ctrl.yaw); if (dyaw > 180.f) dyaw = 360.f - dyaw;
+        fprintf(f, "  POVD off=0x%X dist=%.1f fov=%.2f rot=(%.2f,%.2f) dyaw=%.2f loc=(%.1f,%.1f,%.1f)\n",
+                o, (float)dist, fov, pitch, yaw, dyaw, (float)lx, (float)ly, (float)lz);
+        if (++nd >= 12) break;
+    }
+    if (!nd) fprintf(f, "  POVD none\n");
+    fclose(f);
+}
+
 static void Refresh(SharedState& st) {
 #ifdef PROBE_ONLY
     { static bool g_goDumped = false; if (!g_goDumped) { g_goDumped = true; FindGObjectsAndDump(); } }
@@ -666,6 +759,10 @@ static void Refresh(SharedState& st) {
             st.camLoc = l; st.camRot = r; st.camFov = fv; st.camValid = 1; camMode = 4;
         }
     }
+#ifdef PROBE_ONLY
+    { static bool g_camDumped = false;
+      if (!g_camDumped && ValidPtr(cam) && ValidPtr(pc) && ValidPtr(localPawn)) { g_camDumped = true; DumpCam(pc, cam, localPawn); } }
+#endif
     st.pc = pc; st.localPawn = localPawn;
     st.camMode = camMode;
 #ifdef PROBE_ONLY
