@@ -110,6 +110,29 @@ static void Calibrate() {
         if (d < best) { best = d; bx = sx; by = sy; bi = i; }
     }
     if (bi < 0) { OLog("CAL no target"); return; }
+    {
+        const SPlayer& t = st.players[bi];
+        if (t.boneCount >= 15) {
+            V3 hb{ t.bones[0].x, t.bones[0].y, t.bones[0].z };
+            V3 fb{ t.bones[14].x, t.bones[14].y, t.bones[14].z };
+            float hx, hy, fx, fy;
+            if (W2S(st, hb, hx, hy) && W2S(st, fb, fx, fy)) {
+                float Hw = fabsf(hb.z - fb.z);
+                float Hp = fabsf(hy - fy);
+                float d = t.dist * 100.f;
+                if (Hw > 50.f && Hp > 10.f && d > 100.f) {
+                    float scale = Hp * d / Hw;
+                    if (scale > 1.f) {
+                        float fovNew = 2.f * atanf((W * 0.5f) / scale) * 180.f / 3.14159265f;
+                        if (fovNew > 30.f && fovNew < 140.f) {
+                            g_fovAdj = fovNew - st.camFov;
+                            OLog("CAL fov");
+                        }
+                    }
+                }
+            }
+        }
+    }
     float fov = st.camFov + g_fovAdj;
     float scale = (W * 0.5f) / tanf(fov * 3.14159265f / 360.f);
     float dyaw = atan2f(bx - W * 0.5f, scale) * 180.f / 3.14159265f;

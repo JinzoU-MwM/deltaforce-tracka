@@ -406,3 +406,12 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
   hitung dyaw/dpitch dari proyeksi, set g_yawOff/g_pitchOff. Slider Cam Z/Cam Fwd/
   FOV adj/Yaw/Pitch untuk tuning manual.
 - Runbook: `run_v21.bat`.
+
+## 25. Kalibrasi F9 lengkap
+- Calibrate(): target terdekat crosshair -> 
+  1) FOV dari tinggi body: Hp_px = scale * Hw_world / dist -> scale -> fov;
+     set g_fovAdj (clamp 30..140).
+  2) yaw/pitch offset dari proyeksi chest ke center (pakai FOV baru).
+- Slider manual: Cam Z, Cam Fwd, FOV adj, Yaw offset, Pitch offset.
+- Hotkey: WH_KEYBOARD_LL + RegisterHotKey INSERT; F9 = calibrate.
+- Menu buka: WS_EX_TRANSPARENT dilepas + ShowCursor(TRUE) + SetForegroundWindow.
