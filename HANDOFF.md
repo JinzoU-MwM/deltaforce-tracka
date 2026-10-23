@@ -175,3 +175,41 @@ Jalur yang belum ditempuh:
 - ACE aktif; injeksi section/APC dan akses baca bisa terdeteksi.
 - Semua uji dilakukan di akun Presiden. Tidak ada jaminan bebas ban.
 - Repo private; jangan dibuka publik.
+
+---
+
+## 10. Progres jalur "panggil W2S milik game" (2026-10-22)
+
+Tujuan: ganti W2S manual dengan `APlayerController::ProjectWorldLocationToScreen` /
+`UGameplayStatics::ProjectWorldToScreen` agar bebas kamera/zoom.
+
+Yang sudah didapat:
+```
+FName "ProjectWorldToScreen" = index 1531557 (0x175EA5)   [verified: dfname2 decode]
+UFunction kandidat (heap, alamat bisa berubah tiap run):
+  0x47E12A90  class=Function  thunk +0x1D0 = 0x153499960
+  0x486B32D0  class=Function  thunk +0x1D0 = 0x1509B9420
+Thunk 0x153499960 membaca 2 param lalu call 0x152AE4F80.
+Thunk 0x1509B9420 membaca 1 byte param lalu call 0x1509461DF.
+Keduanya BUKAN thunk static 4-param (Player, FVector&, FVector2D&, bool).
+```
+Probe baru:
+```
+dfgobj.cpp    scan FUObjectArray di section writable (belum ketemu)
+dfgobj2.cpp   scan pola mov reg,[rip+disp] + mov reg,[reg+idx*8] (belum ketemu)
+dfname.cpp    cari FName index via GNames blocks (wide/XOR)
+dfname2.cpp   decode nama sekitar index
+dfufunc*.cpp  scan heap UFunction + dump thunk/impl
+dfpath.cpp    path exe + cek PDB (tidak ada PDB)
+```
+Langkah berikutnya (belum):
+1. Cari FName index "GameplayStatics".
+2. Scan heap UClass bernama GameplayStatics (metaclass Class).
+3. Baca `Children` (UStruct) → rantai UField → temukan UFunction ProjectWorldToScreen
+   yang outer-nya GameplayStatics.
+4. Baca `Func` (+0x1D0) → thunk 4-param → call target C++.
+5. Panggil target dengan ABI: RCX=PC, RDX=&FVector, R8=&FVector2D, R9=bool.
+6. Bandingkan hasil dengan kamera manual; kalau cocok, ganti W2S overlay.
+Catatan: layout UObject build ini belum sepenuhnya terpetakan (Outer/Next/Name
+tumpang tindih dengan asumsi 0x18/0x1C/0x28), jadi validasi UClass wajib ketat
+(vtable di module, class=Function, metaclass=Class, region RW).
