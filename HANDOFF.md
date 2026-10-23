@@ -378,3 +378,9 @@ Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pem
   kaki 2 segmen; titik head dari bone0, feet dari bone14; fallback pos+72.
 - Warna: musuh merah, kawan cyan, target netral kuning; fill alpha 0.30 + outline.
 - `body 1` = silhouette ini (tembus dinding).
+
+## 22. Gaya A: chams filled + glow
+- Glow pass: outline torso 5.5px + circle head +3.5px + limb thick*2.1, alpha 0.20.
+- Core pass: fill alpha 0.55, outline 1.6px.
+- Warna musuh merah, kawan cyan, target netral kuning.
+- Screenshot: target di pintu tampil sebagai body kuning isi penuh + halo.

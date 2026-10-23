@@ -423,24 +423,37 @@ static void DrawFrame(SharedState st, int W, int H) {
                         float mx = (sxh + sxf) * 0.5f;
                         bool en = (st.localCamp >= 0 && p.camp >= 0 && p.camp != st.localCamp);
                         bool neu = (p.camp < 0);
-                        D2D1::ColorF fill = en ? D2D1::ColorF(1.f, 0.16f, 0.16f, 0.30f) : (neu ? D2D1::ColorF(0.95f, 0.9f, 0.2f, 0.30f) : D2D1::ColorF(0.2f, 0.8f, 1.f, 0.30f));
-                        D2D1::ColorF out  = en ? D2D1::ColorF(1.f, 0.32f, 0.32f, 0.95f) : (neu ? D2D1::ColorF(1.f, 0.95f, 0.25f, 0.95f) : D2D1::ColorF(0.3f, 0.9f, 1.f, 0.95f));
+                        D2D1::ColorF fill = en ? D2D1::ColorF(1.f, 0.12f, 0.12f, 0.55f) : (neu ? D2D1::ColorF(1.f, 0.9f, 0.15f, 0.55f) : D2D1::ColorF(0.15f, 0.7f, 1.f, 0.55f));
+                        D2D1::ColorF out  = en ? D2D1::ColorF(1.f, 0.35f, 0.35f, 0.98f) : (neu ? D2D1::ColorF(1.f, 0.96f, 0.35f, 0.98f) : D2D1::ColorF(0.35f, 0.92f, 1.f, 0.98f));
+                        D2D1::ColorF glow = en ? D2D1::ColorF(1.f, 0.08f, 0.08f, 0.20f) : (neu ? D2D1::ColorF(1.f, 0.82f, 0.1f, 0.20f) : D2D1::ColorF(0.1f, 0.6f, 1.f, 0.20f));
                         float ySh = syh + hh * 0.17f, yHip = syh + hh * 0.55f;
                         float wSh = hh * 0.17f, wHip = hh * 0.115f;
                         D2D1_POINT_2F torso[4] = { {mx - wSh, ySh}, {mx + wSh, ySh}, {mx + wHip, yHip}, {mx - wHip, yHip} };
-                        FillPoly(torso, 4, fill);
-                        for (int i = 0; i < 4; ++i) { int j = (i + 1) & 3; Line(torso[i].x, torso[i].y, torso[j].x, torso[j].y, out, 1.2f); }
                         float hr = hh * 0.062f; if (hr < 2.2f) hr = 2.2f; if (hr > 22.f) hr = 22.f;
-                        FillCircle(sxh, syh, hr, fill);
-                        Circle(sxh, syh, hr, out, 1.3f);
                         float lt = hh * 0.045f; if (lt < 1.5f) lt = 1.5f; if (lt > 14.f) lt = 14.f;
                         float yElb = syh + hh * 0.36f, yHand = syh + hh * 0.60f;
+                        float lg = hh * 0.055f; if (lg < 1.7f) lg = 1.7f; if (lg > 16.f) lg = 16.f;
+                        float yKnee = syh + hh * 0.78f;
+                        // glow pass
+                        for (int i = 0; i < 4; ++i) { int j = (i + 1) & 3; Line(torso[i].x, torso[i].y, torso[j].x, torso[j].y, glow, 5.5f); }
+                        Circle(sxh, syh, hr + 3.5f, glow, 4.f);
+                        Thick(mx - wSh * 0.9f, ySh, mx - wSh - hh * 0.05f, yElb, glow, lt * 2.1f);
+                        Thick(mx - wSh - hh * 0.05f, yElb, mx - wSh - hh * 0.02f, yHand, glow, lt * 2.1f);
+                        Thick(mx + wSh * 0.9f, ySh, mx + wSh + hh * 0.05f, yElb, glow, lt * 2.1f);
+                        Thick(mx + wSh + hh * 0.05f, yElb, mx + wSh + hh * 0.02f, yHand, glow, lt * 2.1f);
+                        Thick(mx - wHip * 0.55f, yHip, mx - wHip * 0.65f, yKnee, glow, lg * 2.1f);
+                        Thick(mx - wHip * 0.65f, yKnee, sxf, syf, glow, lg * 2.1f);
+                        Thick(mx + wHip * 0.55f, yHip, mx + wHip * 0.65f, yKnee, glow, lg * 2.1f);
+                        Thick(mx + wHip * 0.65f, yKnee, sxf, syf, glow, lg * 2.1f);
+                        // core pass
+                        FillPoly(torso, 4, fill);
+                        for (int i = 0; i < 4; ++i) { int j = (i + 1) & 3; Line(torso[i].x, torso[i].y, torso[j].x, torso[j].y, out, 1.6f); }
+                        FillCircle(sxh, syh, hr, fill);
+                        Circle(sxh, syh, hr, out, 1.6f);
                         Thick(mx - wSh * 0.9f, ySh, mx - wSh - hh * 0.05f, yElb, fill, lt);
                         Thick(mx - wSh - hh * 0.05f, yElb, mx - wSh - hh * 0.02f, yHand, fill, lt);
                         Thick(mx + wSh * 0.9f, ySh, mx + wSh + hh * 0.05f, yElb, fill, lt);
                         Thick(mx + wSh + hh * 0.05f, yElb, mx + wSh + hh * 0.02f, yHand, fill, lt);
-                        float lg = hh * 0.055f; if (lg < 1.7f) lg = 1.7f; if (lg > 16.f) lg = 16.f;
-                        float yKnee = syh + hh * 0.78f;
                         Thick(mx - wHip * 0.55f, yHip, mx - wHip * 0.65f, yKnee, fill, lg);
                         Thick(mx - wHip * 0.65f, yKnee, sxf, syf, fill, lg);
                         Thick(mx + wHip * 0.55f, yHip, mx + wHip * 0.65f, yKnee, fill, lg);
