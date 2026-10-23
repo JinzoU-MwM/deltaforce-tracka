@@ -32,6 +32,7 @@ constexpr Obf<4>  S_BOX("box");
 constexpr Obf<5>  S_NAME("name");
 constexpr Obf<5>  S_DIST("dist");
 constexpr Obf<5>  S_TEAM("team");
+constexpr Obf<5>  S_BODY("body");
 constexpr Obf<9>  S_MAXD("max dist");
 constexpr Obf<4>  S_AIM("aim");
 constexpr Obf<8>  S_AFOV("aim fov");
@@ -113,6 +114,17 @@ static void Fill(float x, float y, float w, float h, D2D1::ColorF col) {
     g_rt->FillRectangle(D2D1::RectF(x, y, x + w, y + h), g_brush);
 }
 
+static void Line(float x1, float y1, float x2, float y2, D2D1::ColorF col, float t) {
+    if (!g_rt || !g_brush) return;
+    g_brush->SetColor(col);
+    g_rt->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), g_brush, t);
+}
+static void Circle(float x, float y, float r, D2D1::ColorF col, float t) {
+    if (!g_rt || !g_brush) return;
+    g_brush->SetColor(col);
+    g_rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(x, y), r, r), g_brush, t);
+}
+
 static bool InitD2D() {
     if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &g_factory))) return false;
     D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
@@ -160,7 +172,7 @@ static bool W2S(const SharedState& st, const V3& wp, float& sx, float& sy, int W
 }
 
 // ---- ui ------------------------------------------------------------------
-static bool g_menu = true, g_esp = true, g_boxes = true, g_names = true, g_dist = true, g_team = true;
+static bool g_menu = true, g_esp = true, g_boxes = true, g_names = true, g_dist = true, g_team = true, g_body = true;
 static int g_sel = 0;
 static bool g_debug = false;
 static float g_maxDist = 400.f;
@@ -168,6 +180,7 @@ static bool g_aim = false;
 static float g_aimFovPx = 160.f, g_aimMaxStep = 0.35f;
 static float g_camZ = 0.f, g_camFwd = 0.f, g_fovAdj = 0.f, g_fovAds = 67.f;
 static HWND g_gameWnd = nullptr;
+static bool g_autoCap = false;
 static uintptr_t g_aimTarget = 0;
 static DWORD g_aimAcquire = 0, g_aimLastSent = 0, g_ctrlChange = 0;
 static SRot g_lastCtrl{};
@@ -245,17 +258,17 @@ static bool Pressed(int vk) {
 }
 
 static void DrawMenu() {
-    char esp[8], box[8], nm[8], dist[8], team[8], maxd[16], aim[8], afov[16], astep[16];
+    char esp[8], box[8], nm[8], dist[8], team[8], body[8], maxd[16], aim[8], afov[16], astep[16];
     Dec(S_ESP.b, 4, esp); Dec(S_BOX.b, 4, box); Dec(S_NAME.b, 5, nm); Dec(S_DIST.b, 5, dist);
-    Dec(S_TEAM.b, 5, team); Dec(S_MAXD.b, 9, maxd); Dec(S_AIM.b, 8, aim);
+    Dec(S_TEAM.b, 5, team); Dec(S_BODY.b, 5, body); Dec(S_MAXD.b, 9, maxd); Dec(S_AIM.b, 8, aim);
     Dec(S_AFOV.b, 8, afov); Dec(S_ASTEP.b, 9, astep);
     struct It { int kind; void* p; float mn, mx, st; char* lbl; };
-    It it[9] = {
+    It it[10] = {
         {0,&g_esp,0,0,0,esp}, {0,&g_boxes,0,0,0,box}, {0,&g_names,0,0,0,nm},
-        {0,&g_dist,0,0,0,dist}, {0,&g_team,0,0,0,team}, {0,&g_aim,0,0,0,aim},
+        {0,&g_dist,0,0,0,dist}, {0,&g_team,0,0,0,team}, {0,&g_body,0,0,0,body}, {0,&g_aim,0,0,0,aim},
         {1,&g_aimFovPx,20,600,10,afov}, {1,&g_aimMaxStep,0.05f,1.5f,0.05f,astep},
         {1,&g_maxDist,50,1000,25,maxd} };
-    const int n = 9;
+    const int n = 10;
     if (g_menu) {
         if (Pressed(VK_DOWN)) g_sel = (g_sel + 1) % n;
         if (Pressed(VK_UP)) g_sel = (g_sel + n - 1) % n;
@@ -316,11 +329,13 @@ static void CaptureBmp(const SharedState* stp) {
     std::vector<BYTE> px(sz);
     GetDIBits(mem, bmp, 0, h, px.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
     BITMAPFILEHEADER fh{}; fh.bfType = 0x4D42; fh.bfOffBits = sizeof(fh) + sizeof(bi); fh.bfSize = fh.bfOffBits + sz;
-    FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\screen.bmp", "wb");
+    const char* bmpPath = g_autoCap ? "C:\\Users\\User\\trackA\\auto.bmp" : "C:\\Users\\User\\trackA\\screen.bmp";
+    FILE* f = nullptr; fopen_s(&f, bmpPath, "wb");
     if (f) { fwrite(&fh, sizeof(fh), 1, f); fwrite(&bi, sizeof(bi), 1, f); fwrite(px.data(), 1, sz, f); fclose(f); OLog("shot %dx%d", w, h); }
-    if (stp) { FILE* sf=nullptr; fopen_s(&sf,"C:\\Users\\User\\trackA\\snap.txt","w");
+    if (stp) { const char* txtPath = g_autoCap ? "C:\\Users\\User\\trackA\\auto.txt" : "C:\\Users\\User\\trackA\\snap.txt"; FILE* sf=nullptr; fopen_s(&sf,txtPath,"w");
         if(sf){ fprintf(sf,"CAM %.3f %.3f %.3f %.3f %.3f %.3f %.3f %d\n", stp->camLoc.x,stp->camLoc.y,stp->camLoc.z, stp->camRot.pitch,stp->camRot.yaw,stp->camRot.roll, stp->camFov, stp->camValid);
-            for(int i=0;i<stp->playerCount;i++){ const SPlayer& p=stp->players[i]; fprintf(sf,"P %s %d %d %.1f %.1f %.1f %.1f\n", p.name, p.camp, p.team, p.pos.x,p.pos.y,p.pos.z,p.dist); }
+            for(int i=0;i<stp->playerCount;i++){ const SPlayer& p=stp->players[i]; fprintf(sf,"P %s %d %d %.1f %.1f %.1f %.1f %d\n", p.name, p.camp, p.team, p.pos.x,p.pos.y,p.pos.z,p.dist,p.boneCount);
+                for(int bi=0;bi<p.boneCount && bi<16;bi++) fprintf(sf,"B %d %.1f %.1f %.1f\n", bi, p.bones[bi].x,p.bones[bi].y,p.bones[bi].z); }
             fclose(sf); } }
     SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem); ReleaseDC(nullptr, dc);
 }
@@ -368,6 +383,28 @@ static void DrawFrame(SharedState st, int W, int H) {
             float bw = h * 0.45f;
             D2D1::ColorF col = (st.localCamp >= 0 && p.camp >= 0 && p.camp != st.localCamp) ? D2D1::ColorF(1.f, 0.25f, 0.25f) : D2D1::ColorF(0.2f, 0.8f, 1.f);
             if (h < 4.f) { Rect(hx - 2.f, hy - 2.f, 4.f, 4.f, col, 1.f); continue; }
+            if (g_body) {
+                if (p.boneCount >= 4) {
+                    float sx[16], sy[16]; bool okb[16];
+                    for (int bi = 0; bi < 16 && bi < p.boneCount; ++bi) {
+                        V3 b{ p.bones[bi].x, p.bones[bi].y, p.bones[bi].z };
+                        okb[bi] = W2S(st, b, sx[bi], sy[bi], W, H);
+                    }
+                    int pairs[][2] = { {0,1},{1,2},{2,3},{2,4},{4,6},{6,8},{2,5},{5,7},{7,9},{3,10},{10,12},{12,14},{3,11},{11,13},{13,15} };
+                    for (int pi = 0; pi < 15; ++pi) {
+                        int a1 = pairs[pi][0], b1 = pairs[pi][1];
+                        if (a1 < p.boneCount && b1 < p.boneCount && okb[a1] && okb[b1])
+                            Line(sx[a1], sy[a1], sx[b1], sy[b1], col, 1.4f);
+                    }
+                    if (okb[0]) Circle(sx[0], sy[0], (h * 0.06f > 3.f ? h * 0.06f : 3.f), col, 1.4f);
+                } else {
+                    float mx = (fx + hx) * 0.5f;
+                    Line(fx, fy, hx, hy, col, 1.2f);
+                    Line(hx - bw * 0.5f, hy + h * 0.22f, hx + bw * 0.5f, hy + h * 0.22f, col, 1.2f);
+                    Line(hx - bw * 0.35f, hy + h * 0.50f, hx + bw * 0.35f, hy + h * 0.50f, col, 1.2f);
+                    Circle(hx, hy, (h * 0.06f > 3.f ? h * 0.06f : 3.f), col, 1.2f);
+                }
+            }
             if (g_boxes) Rect(fx - bw * 0.5f, hy, bw, h, col, 1.6f);
             if (g_names) Text(fx - bw * 0.5f, hy - 15.f, p.name, col, 12.f);
             if (g_dist) { char b[32]; wsprintfA(b, "%dm", (int)p.dist); Text(fx - bw * 0.5f, hy - 1.f, b, D2D1::ColorF(0.9f, 0.9f, 0.6f), 11.f); }
@@ -480,6 +517,20 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             }
           } }
         bool ok = Snapshot(st);
+        if (ok && st.state == 1 && st.camValid && st.localCamp >= 0) {
+            static DWORD lastAuto = 0; DWORD t = GetTickCount();
+            if (t - lastAuto > 5000) {
+                for (int i = 0; i < st.playerCount; ++i) {
+                    const SPlayer& p = st.players[i];
+                    if (p.camp == st.localCamp) continue;
+                    V3 h{ p.pos.x, p.pos.y, p.pos.z + 72.f };
+                    float sx = 0, sy = 0;
+                    if (W2S(st, h, sx, sy, W, H) && sx > W * 0.35f && sx < W * 0.65f && sy > H * 0.30f && sy < H * 0.70f) {
+                        g_autoCap = true; CaptureBmp(&st); g_autoCap = false; lastAuto = t; break;
+                    }
+                }
+            }
+        }
         if (!ok) { st.state = 0; st.playerCount = 0; st.actorCount = 0; st.camValid = 0; }
         { static DWORD lastLog = 0; DWORD t = GetTickCount();
           if (g_shm && t - lastLog > 2000) { lastLog = t; LogState(st, W, H); } }

@@ -303,3 +303,31 @@ lewat event F8 in-game (core keyEdges), untuk validasi W2S tanpa timing skew.
 - Terbukti: snap berisi CAM + 17 player, sinkron dengan BMP.
 - Catatan: kalau frame berupa tactical map / deathcam, kamera pawn tidak berlaku;
   kalibrasi hanya valid saat gameplay first-person.
+
+## 15. BODY / SKELETON OFFSETS (V16, verified in training factory)
+SDK + live probe (BP_DFMCharacter_SafeHouse_C):
+```
+actor+0x3D0  = Mesh (DFMSkeletalMeshComponent*)
+mesh+0x760   = TArray<FTransform> BoneArray (animated, component-space)
+               ptr @+0, count @+8, max @+0xC; stride 0x30
+               local player: cnt=80; other body: cnt=75
+mesh+0x210   = ComponentToWorld (FTransform: quat @+0, trans @+0x10)
+mesh+0x9F8   = CachedBoneSpaceTransforms (SDK; often zero)
+mesh+0xA08   = CachedComponentSpaceTransforms (SDK; not used by this class)
+mesh+0xEB0   = SkeletalMesh asset
+```
+Live sample (local, feet CTW z=5.5):
+```
+B0 t=(0,-15,0)          root
+B1 t=(-0.6,-14.9,86.7)  pelvis
+B2 t=(-0.6,-14.9,94.0)
+B3 t=(-1.0,-13.3,108.6)
+B4 t=(-1.3,-9.6,121.9)
+B5 t=(-5.7,-3.5,136.8)  chest
+B6.. arms (x -21..-30)
+```
+World = CTW.TransformPosition(local). Pelvis world z 92.2 vs pawn z 91.5 (capsule center).
+V16: core fills 16 bones (head/neck/chest/pelvis/shoulders/elbows/hands/hips/knees/feet)
+by z-fraction/x-side selection; overlay draws skeleton lines (menu `body 1`) with the
+`team 1` filter = enemy only, `team 0` = all (friend+enemy).
+Catatan: training factory solo -> playerCount 0; body baru terlihat saat ada pemain/bot lain.
