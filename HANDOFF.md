@@ -294,3 +294,12 @@ Hasil screenshot V15: label/box hanya DivineSafekey, VIPERALI, Powking,
 FeralCommando (musuh); Escanor/caubachacu/depzaivc (squad) bersih.
 Catatan: overlay bisa capture `snap.txt` (cam+players) sinkron dengan screen.bmp
 lewat event F8 in-game (core keyEdges), untuk validasi W2S tanpa timing skew.
+
+## 14. Synchronized capture (untuk kalibrasi W2S)
+- Overlay15b: jika file `C:\Users\User\trackA\capture.flag` ada, overlay memanggil
+  CaptureBmp(&st) lalu menghapus flag. Output: `screen.bmp` + `snap.txt`
+  (CAM x y z pitch yaw roll fov valid; P name camp team x y z dist).
+- Trigger dari Linux: `echo. > capture.flag`, tunggu 1s, tarik snap.txt + screen.bmp.
+- Terbukti: snap berisi CAM + 17 player, sinkron dengan BMP.
+- Catatan: kalau frame berupa tactical map / deathcam, kamera pawn tidak berlaku;
+  kalibrasi hanya valid saat gameplay first-person.

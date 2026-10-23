@@ -473,6 +473,12 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             FILE* cf = nullptr; fopen_s(&cf, "C:\\Users\\User\\trackA\\camcfg.txt", "r");
             if (cf) { float a=0,b=0,c=0,d=67.f; if (fscanf_s(cf, "%f %f %f %f", &a, &b, &c, &d) >= 3) { g_camZ=a; g_camFwd=b; g_fovAdj=c; g_fovAds=d; } fclose(cf); }
           } }
+        { static DWORD lastFlag = 0; DWORD t = GetTickCount();
+          if (t - lastFlag > 250) { lastFlag = t;
+            if (GetFileAttributesW(L"C:\\Users\\User\\trackA\\capture.flag") != INVALID_FILE_ATTRIBUTES) {
+                CaptureBmp(&st); DeleteFileW(L"C:\\Users\\User\\trackA\\capture.flag");
+            }
+          } }
         bool ok = Snapshot(st);
         if (!ok) { st.state = 0; st.playerCount = 0; st.actorCount = 0; st.camValid = 0; }
         { static DWORD lastLog = 0; DWORD t = GetTickCount();
