@@ -106,7 +106,7 @@ struct SharedState {
 
 > **Single source sejak `5867194`:** offset ada di [`Offsets.hpp`](Offsets.hpp) (`namespace DF`); `core.cpp` memakai `DF::...`. Tabel di bawah = referensi/nama lama (nilai sama).
 
-## 3. Offset game (`namespace off` di `core.cpp`)
+## 3. Offset game (`Offsets.hpp` `namespace DF`; `core.cpp` pakai alias `off::`)
 
 ```
 GWORLD            0x1D9E4E78 (enc 0x1D9E6E78)
@@ -125,8 +125,9 @@ REL_LOCATION      0x168    // SceneComponent
 COMPONENT_TW      0x210    // mesh quat (x,y,z,w)
 PLAYERSTATE       0x390    // Pawn
 PLAYERNAME        0x478    // PlayerState FString
-CAMP              0x670    // PlayerState team id (0 = local?)
-TEAMID            0x66C    // PlayerState squad slot
+CAMP_TRUE         0x660    // PlayerState match team/faction (dipakai core p.camp)
+CAMP_ALT          0x670    // layout lobby/alt (bukan match team)
+TEAMID            0x66C    // PlayerState squad slot 1..4
 IS_BOT            0x39E
 CAM_CACHE         0x30870  // CameraManager (kandidat POV)
 CONTROL_ROT       0x3D8    // PlayerController

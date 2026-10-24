@@ -89,15 +89,15 @@ namespace off {
     constexpr uint32_t CAMP           = (uint32_t)DF::APlayerState_::CampAlt;
     constexpr uint32_t CAMP_TRUE      = (uint32_t)DF::APlayerState_::Camp;
     constexpr uint32_t TEAMID         = (uint32_t)DF::APlayerState_::TeamId;
-    constexpr uint32_t IS_BOT         = 0x39E;
+    constexpr uint32_t IS_BOT         = (uint32_t)DF::APlayerState_::IsBot;
     constexpr uint32_t CAM_CACHE      = (uint32_t)DF::UCameraManager_::CameraCacheCandidate;
     constexpr uint32_t CONTROL_ROT    = (uint32_t)DF::UPlayerController_::ControlRotation;
     constexpr uint32_t ROTATION_INPUT = (uint32_t)DF::UPlayerController_::RotationInput;
     constexpr uint32_t MESH           = (uint32_t)DF::ACharacter_::Mesh;
     constexpr uint32_t BONES          = (uint32_t)DF::USkeletalMeshComponent_::BoneArray;
     constexpr uint32_t BONE_STRIDE    = (uint32_t)DF::USkeletalMeshComponent_::BoneStride;
-    constexpr uint32_t MESH_ASSET     = 0xEB0;
-    constexpr uint32_t SKEL_BONETREE  = 0x38;
+    constexpr uint32_t MESH_ASSET     = (uint32_t)DF::USkeletalMeshComponent_::SkeletalMeshAsset;
+    constexpr uint32_t SKEL_BONETREE  = (uint32_t)DF::USkeleton_::BoneTree;
 }
 
 

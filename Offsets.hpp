@@ -202,12 +202,24 @@ namespace USkeletalMeshComponent_
     constexpr uintptr_t BoneArray = 0x760;          // ptr; count at +8
     constexpr uintptr_t BoneStride = 0x30;
     constexpr uintptr_t BoneLocalPos = 0x10;        // inside bone entry
+    constexpr uintptr_t SkeletalMeshAsset = 0xEB0;  // USkeletalMesh*
+}
+
+namespace USkeletalMesh_
+{
+    constexpr uintptr_t Skeleton = 0x60;            // USkeleton*
+}
+
+namespace USkeleton_
+{
+    constexpr uintptr_t BoneTree = 0x38;            // stripped (FName=0, parent=-1)
 }
 
 namespace APlayerState_
 {
     constexpr uintptr_t PlayerName = 0x478;         // FString
     constexpr uintptr_t Camp       = 0x660;         // verified V15 (faction)
+    constexpr uintptr_t IsBot      = 0x39E;         // bool
     constexpr uintptr_t TeamId     = 0x66C;
     constexpr uintptr_t CampAlt    = 0x670;         // alt/lobby layout
 }
