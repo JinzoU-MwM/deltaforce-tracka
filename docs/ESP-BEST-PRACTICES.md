@@ -1,6 +1,8 @@
 # ESP BEST-PRACTICES — Delta Force (UE5 + ACE)
 
-> Snapshot kode: `f6524d9` (core29/core30 + overlay ImGui). Dokumen ini riset penerapan ESP paling optimal: akurasi, performa, stabilitas, stealth. Semua poin menunjuk file/fungsi nyata di repo ini.
+> Snapshot kode: `2afc9ab` (core30 + overlay ImGui v31, menu 5 tab). Temuan P0 diverifikasi ulang di HEAD ini. `cad3a40` sudah memperbaiki blink ESP (DRAW 100% frame, miss=0) + menu bertab; `a394118` merapikan `0x66C` -> `off::TEAMID`.
+>
+> Dokumen ini riset penerapan ESP paling optimal: akurasi, performa, stabilitas, stealth. Semua poin menunjuk file/fungsi nyata di repo ini.
 
 ---
 
@@ -15,7 +17,7 @@
 | 5 | **Vektor deteksi ACE** | `WH_KEYBOARD_LL` global hook; `VirtualProtect` tiap write aim; `DFImGuiOverlay`/"DF Overlay"/`DFC6_menu_v1`/log+flag path plaintext; `SetForegroundWindow` menu | risiko deteksi/scan proses & hook | `RegisterHotKey`/polling; write RW langsung; random/off; `WDA` (trade-off) |
 | 6 | **Visual belum optimal** | box pakai `p.pos.z + 72` (bukan head bone 32); `p.bot=0` (IsBot 0x39E idle); `p.dist` dari scan bukan posisi prediksi; health/visibility/radar absen | box tidak presisi, info kurang | head/foot bone atau bounds; IsBot; health (verifikasi GAS); radar; visibility = skip |
 
-**Yang sudah bagus:** overlay proses terpisah, core read-only (no D3D hook/no Present hook), seqlock, `SYSTEM+early` (`docs/INJECTION.md`), scan 25 Hz, manual map, skeleton/box/name/distance/team, prediction kamera+player+bone.
+**Yang sudah bagus:** overlay proses terpisah, core read-only (no D3D hook/no Present hook), seqlock, `SYSTEM+early` (`docs/INJECTION.md`), scan 25 Hz, manual map, skeleton/box/name/distance/team, prediction kamera+player+bone, blink ESP sudah fix (`cad3a40`, DRAW 100% frame, miss=0), menu 5 tab.
 
 ---
 
