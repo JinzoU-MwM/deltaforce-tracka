@@ -18,7 +18,9 @@ static void OLog(const char* s){ FILE* f=nullptr; fopen_s(&f,"ovimg.log","a"); i
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-static int W = 1920, H = 1080;
+static int W = 1920, H = 1080;          // permukaan gambar (layar penuh)
+static int g_cx = 0, g_cy = 0, g_cw = 1920, g_ch = 1080;   // client rect game (screen coords)
+static float g_cFovScale = 1.f;
 static ID3D11Device* g_dev = nullptr;
 static ID3D11DeviceContext* g_ctx = nullptr;
 static ID3D11Texture2D* g_tex = nullptr;
@@ -41,6 +43,17 @@ static float g_aimFov = 320.f, g_aimStep = 0.35f, g_maxDist = 1000.f;
 static float g_camZ = 0.f, g_fovAdj = 0.f, g_fovAds = 67.f, g_camFwd = 0.f, g_yawOff = 0.f, g_pitchOff = 0.f;
 
 static int cDrawnLive = 0, cHoldLive = 0;
+static int g_camReject = 0;
+static float g_predMs = 0.f;      // 0 = prediksi OFF (anti-jitter default)
+static bool g_fileTrig = false;   // aim2.flag sebagai pemicu aim (default OFF)
+static int  g_ovEnable = -1;      // nilai enable terakhir yang KITA tulis
+static DWORD g_ovStamp = 0;
+static int  g_ovWhy = 0;          // 0=off 1=auto 2=flag 3=rmb
+static int  g_aimBone = 1;        // 0=Auto, 1=Head, 2=Neck, 3=Chest, 4=Pelvis, 5=Legs
+static int  g_aimBoneUsed = -1;   // bone yang benar-benar dipakai (debug)
+static int  g_forceTab = -1;      // -1 bebas; 0..4 dipaksa via tab.txt
+static int  g_forceTabPrev = -1;
+static int  g_startTab = 0;       // tab saat menu dibuka (cfg startTab)
 
 static void ApplyDefaults() {
     g_esp = true; g_boxes = true; g_names = true; g_dist = true;
@@ -59,6 +72,7 @@ static void SaveCfg() {
     fprintf(f, "aimFov=%.3f\naimStep=%.4f\nmaxDist=%.2f\n", g_aimFov, g_aimStep, g_maxDist);
     fprintf(f, "camZ=%.3f\nfovAdj=%.3f\nfovAds=%.3f\ncamFwd=%.3f\nyawOff=%.3f\npitchOff=%.3f\n",
             g_camZ, g_fovAdj, g_fovAds, g_camFwd, g_yawOff, g_pitchOff);
+    fprintf(f, "predMs=%.2f\nfileTrig=%d\naimBone=%d\nstartTab=%d\n", g_predMs, g_fileTrig ? 1 : 0, g_aimBone, g_startTab);
     fclose(f);
     OLog("CFG saved");
 }
@@ -91,9 +105,51 @@ static void LoadCfg() {
         else if (!strcmp(k, "camFwd")) g_camFwd = fv;
         else if (!strcmp(k, "yawOff")) g_yawOff = fv;
         else if (!strcmp(k, "pitchOff")) g_pitchOff = fv;
+        else if (!strcmp(k, "predMs")) g_predMs = fv;
+        else if (!strcmp(k, "fileTrig")) g_fileTrig = iv != 0;
+        else if (!strcmp(k, "aimBone")) g_aimBone = iv;
+        else if (!strcmp(k, "startTab")) g_startTab = iv;
     }
     fclose(f);
     OLog("CFG loaded");
+}
+
+static float Dist3(const SVec3& a, const SVec3& b) {
+    float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+// Kamera shm bisa berganti sumber antar-publish: mode 1/3/4/5 = kandidat POV
+// (berisi template 0,8000,5000 fov 50) sementara mode 2 = controlRot + head.
+// Pergantian mode = seluruh layar melompat. Semua mode selain 2 ditolak,
+// lalu dibangun ulang dari controlRot + selfPos.
+static void SanitizeCam(SharedState& st) {
+    bool hasSelf = (fabsf(st.selfPos.x) + fabsf(st.selfPos.y)) > 1.f;
+    if (!hasSelf) return;
+    bool bad = false;
+    if (!st.camValid) bad = true;
+    if (st.camMode != 2) bad = true;                       // POV kandidat = template
+    if (Dist3(st.camLoc, st.selfPos) > 3000.f) bad = true; // jauh dari pemain = template
+    if (st.camFov < 60.f || st.camFov > 120.f) bad = true; // template fov=50
+    if (bad) {
+        st.camLoc = SVec3{ st.selfPos.x, st.selfPos.y, st.selfPos.z + 65.f };
+        st.camRot = st.controlRot;
+        st.camFov = 90.f;
+        st.camValid = 1;
+        st.camMode = 2;
+        ++g_camReject;
+    }
+}
+
+// Geometri proyeksi mengikuti CLIENT GAME, bukan resolusi monitor.
+// (docs/ESP-BEST-PRACTICES §3.3)
+static void UpdateGeometry() {
+    if (!g_gameWnd || !IsWindow(g_gameWnd)) return;
+    RECT rc{}; POINT org{ 0, 0 };
+    if (!GetClientRect(g_gameWnd, &rc)) return;
+    if (!ClientToScreen(g_gameWnd, &org)) return;
+    if (rc.right < 320 || rc.bottom < 240) return;
+    g_cx = org.x; g_cy = org.y; g_cw = rc.right; g_ch = rc.bottom;
 }
 
 struct V3 { float x, y, z; };
@@ -116,9 +172,10 @@ static bool W2S(const SharedState& st, const V3& wp, float& sx, float& sy) {
     if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) && g_fovAds > 5.f) fovUse = g_fovAds;
     float th = tanf(fovUse * 3.14159265f / 360.f);
     if (th <= 0.001f) return false;
-    float scale = (W * 0.5f) / th;
-    sx = W * 0.5f + (right * scale) / fwd;
-    sy = H * 0.5f - (up * scale) / fwd;
+    // proyeksi ke client rect game (bukan monitor)
+    float scale = (g_cw * 0.5f) / th;
+    sx = g_cx + g_cw * 0.5f + (right * scale) / fwd;
+    sy = g_cy + g_ch * 0.5f - (up * scale) / fwd;
     return true;
 }
 
@@ -175,7 +232,12 @@ static void UpdatePrediction() {
     if (newSnap) {
         if (g_prevT) {
             float dt = (now - g_prevT) / 1000.f;
-            if (dt > 0.001f && dt < 0.5f) {
+            // guard teleport: lompatan besar = ganti sumber kamera/respawn, jangan dipakai
+            float dyTest = g_st.camRot.yaw - g_prevRot.yaw;
+            while (dyTest > 180.f) dyTest -= 360.f; while (dyTest < -180.f) dyTest += 360.f;
+            bool tp = (fabsf(dyTest) > 30.f) || (Dist3(g_st.camLoc, g_prevLoc) > 800.f);
+            if (tp) { g_velYaw = g_velPitch = g_velX = g_velY = g_velZ = 0.f; }
+            else if (dt > 0.001f && dt < 0.2f) {
                 float dy = g_st.camRot.yaw - g_prevRot.yaw;
                 while (dy > 180.f) dy -= 360.f; while (dy < -180.f) dy += 360.f;
                 float nvy = dy / dt, nvp = (g_st.camRot.pitch - g_prevRot.pitch) / dt;
@@ -191,21 +253,17 @@ static void UpdatePrediction() {
         }
         g_prevRot = g_st.camRot; g_prevLoc = g_st.camLoc; g_prevT = now; g_prevSeq = g_st.seq;
     }
-    float pred = (now - g_prevT) / 1000.f;
-    if (pred < 0) pred = 0; if (pred > 0.04f) pred = 0.04f;
     g_draw = g_st;
-    float py = g_velYaw * pred, pp = g_velPitch * pred;
+    if (g_predMs <= 0.01f) return;                 // prediksi OFF -> gambar pakai data apa adanya
+    float predMax = g_predMs / 1000.f;
+    float pred = (now - g_prevT) / 1000.f;
+    if (pred < 0) pred = 0; if (pred > predMax) pred = predMax;
+    // rotasi TIDAK diekstrapolasi (satu spike yaw = seluruh layar geser)
     float px = g_velX * pred, pyy = g_velY * pred, pz = g_velZ * pred;
-    if (py > 1.5f) py = 1.5f; if (py < -1.5f) py = -1.5f;
-    if (pp > 1.5f) pp = 1.5f; if (pp < -1.5f) pp = -1.5f;
     if (px > 40.f) px = 40.f; if (px < -40.f) px = -40.f;
     if (pyy > 40.f) pyy = 40.f; if (pyy < -40.f) pyy = -40.f;
     if (pz > 40.f) pz = 40.f; if (pz < -40.f) pz = -40.f;
-    g_draw.camRot.yaw += py;
-    g_draw.camRot.pitch += pp;
-    g_draw.camLoc.x += px;
-    g_draw.camLoc.y += pyy;
-    g_draw.camLoc.z += pz;
+    g_draw.camLoc.x += px; g_draw.camLoc.y += pyy; g_draw.camLoc.z += pz;
     for (int i = 0; i < g_st.playerCount && i < 128; ++i) {
         SPlayer p = g_st.players[i];
         if (i < g_ppN && g_pp[i].pawn == p.pawn) {
@@ -233,6 +291,8 @@ static void UpdatePrediction() {
 }
 static void WriteAimCmd(bool en, float yaw, float pitch) {
     if (!g_shm) return;
+    g_ovEnable = en ? 1 : 0;
+    g_ovStamp = GetTickCount();
     InterlockedIncrement(&g_shm->cmd.seq);
     g_shm->cmd.enable = en ? 1 : 0;
     g_shm->cmd.yaw = yaw; g_shm->cmd.pitch = pitch;
@@ -242,25 +302,62 @@ static void WriteAimCmd(bool en, float yaw, float pitch) {
     InterlockedIncrement(&g_shm->cmd.seq);
 }
 
+// bone map mesh (verified V16/V22): 1 pelvis, 3 chest, 5 neck, 31/32 head,
+// 58/59 thigh-calf L, 62/63 thigh-calf R
+static int AimBoneFor(int sel) {
+    switch (sel) {
+    case 1: return 32;   // head
+    case 2: return 5;    // neck
+    case 3: return 3;    // chest
+    case 4: return 1;    // pelvis
+    case 5: return 58;   // thigh L
+    case 6: return 62;   // thigh R
+    default: return -1;  // auto
+    }
+}
+static const char* AimBoneName(int sel) {
+    static const char* n[] = { "Auto", "Head", "Neck", "Chest", "Pelvis", "Leg L", "Leg R" };
+    return (sel >= 0 && sel <= 6) ? n[sel] : "?";
+}
+// titik fallback kalau bone tidak tersedia
+static float AimBoneZOff(int sel) {
+    switch (sel) {
+    case 1: return 62.f; case 2: return 55.f; case 3: return 30.f;
+    case 4: return 5.f;  case 5: return -35.f; case 6: return -35.f;
+    default: return 62.f;
+    }
+}
+
 static void AimTick() {
     if (g_shmVer < 23) { WriteAimCmd(false, 0, 0); return; }
     if (!g_haveState || g_draw.state != 1 || !g_draw.camValid) { WriteAimCmd(false, 0, 0); return; }
-    bool autoFlag = (GetFileAttributesA("C:\\Users\\User\\trackA\\aim2.flag") != INVALID_FILE_ATTRIBUTES);
+    // File trigger hanya kalau diaktifkan eksplisit di SETTINGS (default OFF).
+    // Dulu aim2.flag yang tertinggal bikin aim selalu nyala walau menu off.
+    bool autoFlag = g_fileTrig && (GetFileAttributesA("C:\\Users\\User\\trackA\\aim2.flag") != INVALID_FILE_ATTRIBUTES);
     bool active = g_aimAuto || autoFlag || (g_aim && (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
+    g_ovWhy = g_aimAuto ? 1 : (autoFlag ? 2 : (g_aim ? 3 : 0));
     if (!active) { WriteAimCmd(false, 0, 0); return; }
     float best = 1e9f; int bi = -1; float tx = 0, ty = 0, tz = 0;
     for (int i = 0; i < g_draw.playerCount; ++i) {
         const SPlayer& p = g_draw.players[i];
         if (g_team && g_draw.localCamp >= 0 && p.camp == g_draw.localCamp) continue;
         if (p.dist > g_maxDist) continue;
-        float hx, hy, hz;
-        if (p.boneCount > 32) { hx = p.bones[32].x; hy = p.bones[32].y; hz = p.bones[32].z; }
-        else { hx = p.pos.x; hy = p.pos.y; hz = p.pos.z + 62.f; }
-        float sx, sy;
-        if (!W2S(g_draw, V3{ hx, hy, hz }, sx, sy)) continue;
-        float dx = sx - W * 0.5f, dy = sy - H * 0.5f;
-        float d = sqrtf(dx * dx + dy * dy);
-        if (d <= g_aimFov && d < best) { best = d; bi = i; tx = hx; ty = hy; tz = hz; }
+        // kandidat titik bidik sesuai pilihan menu
+        int cand[3]; int nc = 0;
+        int fixed = AimBoneFor(g_aimBone);
+        if (fixed >= 0) { cand[nc++] = fixed; }
+        else { cand[nc++] = 32; cand[nc++] = 5; cand[nc++] = 3; }   // Auto: head/neck/chest
+        for (int ci = 0; ci < nc; ++ci) {
+            int bone = cand[ci];
+            float hx, hy, hz;
+            if (p.boneCount > bone && bone > 0) { hx = p.bones[bone].x; hy = p.bones[bone].y; hz = p.bones[bone].z; }
+            else { hx = p.pos.x; hy = p.pos.y; hz = p.pos.z + AimBoneZOff(g_aimBone ? g_aimBone : 1); }
+            float sx, sy;
+            if (!W2S(g_draw, V3{ hx, hy, hz }, sx, sy)) continue;
+            float dx = sx - W * 0.5f, dy = sy - H * 0.5f;
+            float d = sqrtf(dx * dx + dy * dy);
+            if (d <= g_aimFov && d < best) { best = d; bi = i; tx = hx; ty = hy; tz = hz; g_aimBoneUsed = bone; }
+        }
     }
     static int lastTgt = -1; static DWORD lastSwitch = 0;
     DWORD now = GetTickCount();
@@ -285,6 +382,7 @@ static void MaybeSpawnShot() {
 }
 static void SetOpen(bool open) {
     g_open = open;
+    if (open) { g_forceTab = g_startTab; g_forceTabPrev = -1; }
     OLog(open ? "OPEN" : "CLOSE");
     LONG_PTR ex = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
     if (open) {
@@ -450,8 +548,9 @@ static int ConvexHull(ImVec2* p, int n, ImVec2* h) {
 static void DrawESP() {
     {
         ImDrawList* dl0 = ImGui::GetBackgroundDrawList();
-        bool act = g_aim || g_aimAuto || (GetFileAttributesA("C:\Users\User\trackA\aim2.flag") != INVALID_FILE_ATTRIBUTES);
-        dl0->AddCircle(ImVec2(W * 0.5f, H * 0.5f), g_aimFov, act ? IM_COL32(0, 255, 140, 160) : IM_COL32(0, 255, 140, 70), 0, 1.6f);
+        bool act = g_aim || g_aimAuto;
+        dl0->AddCircle(ImVec2(g_cx + g_cw * 0.5f, g_cy + g_ch * 0.5f), g_aimFov,
+                       act ? IM_COL32(0, 255, 140, 160) : IM_COL32(0, 255, 140, 70), 0, 1.6f);
     }
     static int cDrawn = 0, cTeam = 0, cDist = 0, cOff = 0, cHold = 0;
     static DWORD cT = 0;
@@ -467,8 +566,19 @@ static void DrawESP() {
         const SPlayer& p = st.players[i];
         if (p.dist > g_maxDist) { ++cDist; continue; }
         if (g_team && st.localCamp >= 0 && p.camp == st.localCamp) { ++cTeam; continue; }
+        // Box dari bone: head=32, kaki terendah 58..65 (fallback pos.z+72 / pos.z)
         V3 feet{ p.pos.x, p.pos.y, p.pos.z };
         V3 head{ p.pos.x, p.pos.y, p.pos.z + 72.f };
+        if (p.boneCount > 65) {
+            head = V3{ p.bones[32].x, p.bones[32].y, p.bones[32].z };
+            float bestZ = 1e18f; bool haveFoot = false;
+            const int footB[8] = { 58, 59, 60, 61, 62, 63, 64, 65 };
+            for (int fi = 0; fi < 8; ++fi) {
+                const SVec3& b = p.bones[footB[fi]];
+                if (b.z > -1e6f && b.z < 1e6f && b.z < bestZ) { bestZ = b.z; feet = V3{ b.x, b.y, b.z }; haveFoot = true; }
+            }
+            if (!haveFoot) feet = V3{ p.pos.x, p.pos.y, p.pos.z };
+        }
         float fx, fy, hx, hy;
         if (!W2S(st, feet, fx, fy) || !W2S(st, head, hx, hy)) { ++cOff; continue; }
         float h = fy > hy ? fy - hy : hy - fy;
@@ -516,11 +626,32 @@ static void DrawESP() {
     {
         DWORD nw = GetTickCount();
         if (nw - cT >= 1000) {
+            // metrik goyang kamera: delta rotasi/lokasi antar-frame (bebas gerak target)
+            static SRot pRot{}; static SVec3 pLoc{}; static bool jHas = false;
+            static float jMax = 0, jLocMax = 0;
+            if (jHas) {
+                float dy = st.camRot.yaw - pRot.yaw;
+                while (dy > 180.f) dy -= 360.f; while (dy < -180.f) dy += 360.f;
+                float dp = st.camRot.pitch - pRot.pitch;
+                while (dp > 180.f) dp -= 360.f; while (dp < -180.f) dp += 360.f;
+                float dr = fabsf(dy) > fabsf(dp) ? fabsf(dy) : fabsf(dp);
+                float dl = Dist3(st.camLoc, pLoc);
+                if (dr > jMax) jMax = dr;
+                if (dl > jLocMax) jLocMax = dl;
+            }
+            pRot = st.camRot; pLoc = st.camLoc; jHas = true;
             cT = nw;
             char lg[192];
             sprintf_s(lg, "DRAW ply=%d drawn=%d team=%d dist=%d off=%d hold=%d miss=%d maxd=%.0f tf=%d",
                      st.playerCount, cDrawn, cTeam, cDist, cOff, cHold, g_snapMiss, g_maxDist, g_team ? 1 : 0);
             OLog(lg);
+            char lg2[224];
+            sprintf_s(lg2, "JIT drot=%.2fdeg dloc=%.1f mode=%d reject=%d pred=%.0fms hold=%d aimEn=%d ovEn=%d why=%d client=%dx%d+%d+%d bone=%s",
+                      jMax, jLocMax, st.camMode, g_camReject, g_predMs, cHold,
+                      (g_shm ? (int)g_shm->cmd.enable : -1), g_ovEnable, g_ovWhy,
+                      g_cw, g_ch, g_cx, g_cy, AimBoneName(g_aimBone));
+            OLog(lg2);
+            jMax = 0; jLocMax = 0;
             cDrawn = cTeam = cDist = cOff = cHold = 0;
         }
     }
@@ -594,6 +725,14 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             if (msg.message == WM_QUIT) done = true;
         }
         if (done) break;
+        {
+            FILE* tf = nullptr;
+            if (fopen_s(&tf, "tab.txt", "r") == 0 && tf) {
+                int v = -1;
+                if (fscanf_s(tf, "%d", &v) == 1 && v >= 0 && v <= 4) g_forceTab = v;
+                fclose(tf); DeleteFileA("tab.txt");
+            }
+        }
         if (GetFileAttributesA("C:\\Users\\User\\trackA\\menu.flag") != INVALID_FILE_ATTRIBUTES) {
             DeleteFileA("C:\\Users\\User\\trackA\\menu.flag");
             OLog("FLAG toggle");
@@ -601,7 +740,9 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         }
 
 
+        { static DWORD gT = 0; DWORD nw = GetTickCount(); if (nw - gT >= 1000) { gT = nw; UpdateGeometry(); } }
         g_haveState = Snapshot(g_st);
+        if (g_haveState) SanitizeCam(g_st);
         UpdatePrediction();
         if (g_menu) {
             g_menu->magic = MENU_MAGIC; g_menu->version = MENU_VERSION;
@@ -646,8 +787,20 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             ImGui::TextDisabled("| shm v%u | %.0f fps", g_shmVer, ImGui::GetIO().Framerate);
             ImGui::TextDisabled("INSERT / Ctrl+Alt+M = show-hide   F9 = calibrate");
             if (ImGui::BeginTabBar("##dftabs", ImGuiTabBarFlags_None)) {
+                ImGuiTabItemFlags fESP = 0, fAIM = 0, fCAM = 0, fSET = 0, fINF = 0;
+                if (g_forceTab >= 0 && g_forceTab != g_forceTabPrev) {
+                    g_forceTabPrev = g_forceTab;
+                    { char tl[48]; sprintf_s(tl, "TAB force=%d", g_forceTab); OLog(tl); }
+                    switch (g_forceTab) {
+                    case 0: fESP = ImGuiTabItemFlags_SetSelected; break;
+                    case 1: fAIM = ImGuiTabItemFlags_SetSelected; break;
+                    case 2: fCAM = ImGuiTabItemFlags_SetSelected; break;
+                    case 3: fSET = ImGuiTabItemFlags_SetSelected; break;
+                    default: fINF = ImGuiTabItemFlags_SetSelected; break;
+                    }
+                }
 
-                if (ImGui::BeginTabItem("ESP")) {
+                if (ImGui::BeginTabItem("ESP", nullptr, fESP)) {
                     ImGui::Spacing();
                     ImGui::Checkbox("ESP master", &g_esp);
                     ImGui::Checkbox("Box", &g_boxes);
@@ -657,6 +810,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     ImGui::SeparatorText("Filter");
                     ImGui::Checkbox("Team filter (enemy only)", &g_team);
                     ImGui::SliderFloat("Max dist", &g_maxDist, 50.f, 1000.f, "%.0f m");
+                    ImGui::SliderFloat("Prediction", &g_predMs, 0.f, 60.f, "%.0f ms (0=off)");
                     ImGui::SeparatorText("Status");
                     ImGui::Text("players=%d  drawn=%d", g_st.playerCount, cDrawnLive);
                     ImGui::Text("camp=%d  team=%d  cam=%d", g_st.localCamp, g_st.localTeam, g_st.camValid);
@@ -664,22 +818,27 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("AIM")) {
+                if (ImGui::BeginTabItem("AIM", nullptr, fAIM)) {
                     ImGui::Spacing();
                     ImGui::Checkbox("Aim assist (hold RMB)", &g_aim);
                     ImGui::Checkbox("Auto aim (always)", &g_aimAuto);
                     ImGui::SeparatorText("Tuning");
                     ImGui::SliderFloat("Aim FOV (px)", &g_aimFov, 20.f, 600.f, "%.0f px");
                     ImGui::SliderFloat("Max step (deg/8ms)", &g_aimStep, 0.05f, 1.50f, "%.2f");
-                    ImGui::SeparatorText("Target");
-                    ImGui::TextDisabled("head bone = 32, path = ROTATION_INPUT");
+                    ImGui::SeparatorText("Target body part");
+                    ImGui::Combo("Aim point", &g_aimBone,
+                                 "Auto (head>neck>chest)\0Head (32)\0Neck (5)\0Chest (3)\0Pelvis (1)\0Leg L (58)\0Leg R (62)\0");
+                    int showBone = (g_aimBoneUsed > 0) ? g_aimBoneUsed : AimBoneFor(g_aimBone);
+                    ImGui::TextDisabled("dipakai: %s (bone %d)%s - path ROTATION_INPUT",
+                                        AimBoneName(g_aimBone), showBone,
+                                        (g_aimBoneUsed > 0) ? "" : " [belum lock target]");
                     if (ImGui::Button("Center FOV to screen")) g_aimFov = (float)H * 0.30f;
                     ImGui::SameLine();
                     if (ImGui::Button("Reset aim")) { g_aimFov = 320.f; g_aimStep = 0.35f; }
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("CAMERA")) {
+                if (ImGui::BeginTabItem("CAMERA", nullptr, fCAM)) {
                     ImGui::Spacing();
                     ImGui::SliderFloat("Cam Z", &g_camZ, -50.f, 50.f, "%.1f");
                     ImGui::SliderFloat("Cam Fwd", &g_camFwd, -100.f, 100.f, "%.1f");
@@ -694,7 +853,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("SETTINGS")) {
+                if (ImGui::BeginTabItem("SETTINGS", nullptr, fSET)) {
                     ImGui::Spacing();
                     if (ImGui::Button("Save config", ImVec2(140, 0))) SaveCfg();
                     ImGui::SameLine();
@@ -705,12 +864,13 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     ImGui::TextDisabled("config file: overlay_cfg.txt (folder overlay)");
                     ImGui::TextDisabled("log: ovimg.log");
                     ImGui::Spacing();
+                    ImGui::Checkbox("File trigger aim2.flag (automasi)", &g_fileTrig);
                     ImGui::TextDisabled("Hotkey: INSERT / Ctrl+Alt+M lewat core (PollKeys)");
                     ImGui::TextDisabled("Fallback file: menu.flag (ToggleMenu.bat)");
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("INFO")) {
+                if (ImGui::BeginTabItem("INFO", nullptr, fINF)) {
                     ImGui::Spacing();
                     ImGui::Text("shm version : %u", g_shmVer);
                     ImGui::Text("state       : %d  (1=ok 2=no world 3=level 4=GI)", g_st.state);
@@ -720,6 +880,8 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     ImGui::Text("local       : camp=%d team=%d dead=%d", g_st.localCamp, g_st.localTeam, g_st.selfDead);
                     ImGui::SeparatorText("Health");
                     ImGui::Text("snapshot miss : %d", g_snapMiss);
+                    ImGui::Text("cam rejected  : %d", g_camReject);
+                    ImGui::Text("cam mode/fov  : %d / %.1f", g_st.camMode, g_st.camFov);
                     ImGui::Text("hold frames   : %d", cHoldLive);
                     ImGui::Text("drawn (1s)    : %d", cDrawnLive);
                     ImGui::Text("fps           : %.0f", ImGui::GetIO().Framerate);

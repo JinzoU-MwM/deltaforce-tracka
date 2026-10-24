@@ -634,16 +634,25 @@ static void FillBones(SPlayer& p, uintptr_t actor) {
     float tx = R<float>(mesh + off::COMPONENT_TW + 0x10), ty = R<float>(mesh + off::COMPONENT_TW + 0x14), tz = R<float>(mesh + off::COMPONENT_TW + 0x18);
     float qn = qx*qx + qy*qy + qz*qz + qw*qw;
     if (!(qn > 0.8f && qn < 1.2f)) return;
+    // Satu read untuk seluruh bone array (bukan 3 read/bone), index ASLI dipertahankan
+    // supaya bone 32=head, 58..65=kaki tidak bergeser saat ada bone invalid.
+    int nb = cnt > 80 ? 80 : cnt;
+    static uint8_t rawBones[80 * 0x30];
+    if (!ReadMem(rawBones, bp, (size_t)nb * off::BONE_STRIDE)) return;
     int n = 0;
-    for (int i = 0; i < cnt && i < 80; ++i) {
-        float lx = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x10), ly = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x14), lz = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x18);
+    for (int i = 0; i < nb; ++i) {
+        float lx, ly, lz;
+        MMove(&lx, rawBones + (size_t)i * off::BONE_STRIDE + 0x10, 4);
+        MMove(&ly, rawBones + (size_t)i * off::BONE_STRIDE + 0x14, 4);
+        MMove(&lz, rawBones + (size_t)i * off::BONE_STRIDE + 0x18, 4);
         if (!((lx==lx)&&(ly==ly)&&(lz==lz))) continue;
+        if (lx > 1e6f || lx < -1e6f || ly > 1e6f || ly < -1e6f || lz > 1e6f || lz < -1e6f) continue;
         float wx, wy, wz;
         QRot(qx,qy,qz,qw, lx,ly,lz, wx,wy,wz);
-        p.bones[n].x = wx + tx; p.bones[n].y = wy + ty; p.bones[n].z = wz + tz;
+        p.bones[i].x = wx + tx; p.bones[i].y = wy + ty; p.bones[i].z = wz + tz;
         ++n;
     }
-    p.boneCount = n;
+    p.boneCount = nb > n ? nb : n;   // index asli valid sampai nb
 }
 
 
@@ -798,16 +807,21 @@ static void Refresh(SharedState& st) {
                 }
             }
         }
+        // selfPos/localCamp selalu diisi, terlepas dari sumber kamera.
         if (ValidPtr(localPawn)) {
             uintptr_t ps = DPtr(R<uint64_t>(localPawn + off::PLAYERSTATE));
             if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + off::CAMP_TRUE); st.localTeam = R<int32_t>(ps + off::TEAMID); st.selfDead = 0; }
             uintptr_t r0 = DPtr(R<uint64_t>(localPawn + off::ROOT_COMP));
             if (ValidPtr(r0)) {
-                SVec3 ctw = R<SVec3>(r0 + off::COMPONENT_TW + 0x10);
-                SVec3 rel = R<SVec3>(r0 + off::REL_LOCATION);
-                SVec3 sp = rel;
+                SVec3 sp0 = R<SVec3>(r0 + off::REL_LOCATION);
+                if (PosOK(sp0)) st.selfPos = sp0;
+            }
+        }
+        if (camMode == 0 && ValidPtr(localPawn)) {   // fallback hanya bila POV tidak ada
+            uintptr_t r0 = DPtr(R<uint64_t>(localPawn + off::ROOT_COMP));
+            if (ValidPtr(r0)) {
+                SVec3 sp = st.selfPos;
                 if (PosOK(sp)) {
-                    st.selfPos = sp;
                     float hx, hy, hz;
                     if (LocalHead(localPawn, hx, hy, hz)) {
                         st.camLoc = SVec3{ hx, hy, hz - 10.f };
@@ -864,6 +878,19 @@ static void Refresh(SharedState& st) {
     { static bool g_camDumped = false;
       if (!g_camDumped && ValidPtr(cam) && ValidPtr(pc) && ValidPtr(localPawn)) { g_camDumped = true; DumpCam(pc, cam, localPawn); } }
 #endif
+    // Validasi sumber kamera: POV kandidat (mode 1/3/4/5) sering berisi template
+    // (0,8000,5000 fov 50). Kalau jauh dari pemain atau FOV template -> pakai
+    // controlRot + selfPos (mode 2) supaya kamera tidak berganti-ganti antar publish.
+    if (camMode != 2 && camMode != 0 && PosOK(st.selfPos)) {
+        float dx = st.camLoc.x - st.selfPos.x, dy = st.camLoc.y - st.selfPos.y, dz = st.camLoc.z - st.selfPos.z;
+        if ((dx * dx + dy * dy + dz * dz) > (3000.f * 3000.f) || st.camFov < 60.f || st.camFov > 120.f) {
+            st.camLoc = SVec3{ st.selfPos.x, st.selfPos.y, st.selfPos.z + 65.f };
+            st.camRot = st.controlRot;
+            st.camFov = 90.f;
+            st.camValid = 1;
+            camMode = 2;
+        }
+    }
     st.pc = pc; st.localPawn = localPawn;
     st.camMode = camMode;
     if (ValidPtr(pc)) {

@@ -455,3 +455,23 @@ Ukur: `QueryPerformanceCounter` di core (`scanUs`, `readCount`, `publishUs`) dan
 - DXGI/DWM: `CreateSwapChainForComposition`, `DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT`, `DwmExtendFrameIntoClientArea`, `DwmGetWindowAttribute`, `SetWindowDisplayAffinity`.
 - Anti-cheat: `docs/INJECTION.md`; `ObRegisterCallbacks`; `SeDebugPrivilege`; `SYSTEM+early`.
 - Repo: `core.cpp`, `overlay_imgui.cpp`, `shared.h`, `Offsets.hpp`, `HANDOFF.md` §3/§9.
+
+---
+
+## 8. Status implementasi (2026-10-24, overlay v31.2 + core31)
+
+Yang sudah dikerjakan setelah dokumen ini ditulis — semua terverifikasi live lewat `ovimg.log`:
+
+| Temuan | Status | Bukti |
+|---|---|---|
+| §2.1 fallback kamera menimpa POV | **fixed** — `if (camMode == 0 && ...)`; `selfPos`/`localCamp` kini diisi di luar pemilihan kamera | `core.cpp` blok kamera |
+| §2.1 mode kamera berganti = layar lompat | **fixed di overlay** — `SanitizeCam()` menolak `camMode != 2`, `|camLoc-selfPos| > 3000`, `fov < 60`; kamera dibangun ulang dari `controlRot + selfPos` | `JIT ... mode=2 reject=0`; `drot` maks 1,7°/s (sebelumnya flip 358°) |
+| §3.1 render CPU (loop alpha 2M px) | **fixed** — loop premultiply dibuang (ImGui blend di target transparan sudah premultiplied); pacing `DwmFlush()` | `drawn` 30 → 585–720/detik, ~110–130 fps |
+| §3.3 geometri pakai `SM_CXSCREEN` | **fixed** — `UpdateGeometry()`: `GetClientRect` + `ClientToScreen`, dipakai W2S, FOV circle, pusat aim | `JIT ... client=1920x1080+0+0` |
+| §3.3 box pakai `pos.z + 72` | **fixed** — head `bones[32]`, feet = bone terendah `58..65`, fallback pos | `core.cpp`/`overlay_imgui.cpp` |
+| §4.2 bone read 3×/bone + index bergeser | **fixed** — 1 `ReadMem` per player, `p.bones[i]` index asli | `FillBones` |
+| Bug aim: `aim2.flag` tertinggal → aim selalu nyala | **fixed** — file trigger jadi opt-in (`g_fileTrig`, default off), flag usang dihapus | `JIT ... aimEn=0 ovEn=0 why=0` |
+| Blink ESP (state flap 1↔2) | **fixed** — snapshot tahan-last-good (64 spin, tanpa `Sleep`) + grace 600 ms di `DrawESP` | `DRAW ... hold=42 miss=0`, 100% frame ada ESP |
+| Menu | **5 tab**: ESP / AIM / CAMERA / SETTINGS / INFO; target bidik: Auto, Head(32), Neck(5), Chest(3), Pelvis(1), Leg L(58), Leg R(62); simpan/muat `overlay_cfg.txt`; `tab.txt` untuk memilih tab | screenshot `_panel.png` |
+
+Belum dikerjakan (tetap terbuka): §2.2 matriks view-projection dari core, §3.2 swapchain/DirectComposition, §4.1 `GameState.PlayerArray`, §4.3 double-buffer shm + shm 24 bone, §5 health/visibility/radar, §6 stealth (hook & nama objek).
