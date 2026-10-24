@@ -10,12 +10,13 @@ Repo private. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, b
 | `core.cpp` | core30 DLL (in-game): scan semua level, publish shm V30 tiap 10ms, AimLoop `ROTATION_INPUT`, PollKeys, EnsureOverlay |
 | `shared.h` | SharedState/SPlayer/AimCmd/MenuCfg + nama shm V22–V30 |
 | `overlay_imgui.cpp` | overlay multi V22–V30: ESP, skeleton, FOV circle, prediksi `g_draw`, ADS FOV, AimCmd, menu |
-| `Offsets.hpp` | UEOffsets (UE5 SDK: FNamePool/UObject) |
+| `Offsets.hpp` | **single source of truth** offset (UEOffsets + `namespace DF`; core pakai `DF::`) |
 | `build30.bat` | build core30 + overlay multi (MSVC) |
 | `StartOverlay.bat` | kill overlay → copy `dfimgui_overlay_multi.exe` → start |
 | `watch_inject.bat` | watcher SYSTEM: tunggu proses game → inject core30 |
 | `injsys.bat`, `inj30.bat` | injector satu kali (SYSTEM) |
 | `setup_imgui.ps1` | clone Dear ImGui ke `imgui/` (dibutuhkan build) |
+| `docs/INJECTION.md` | troubleshooting `NtMapViewOfSection 0xC0000022` — token/timing, watcher SYSTEM, checklist |
 | `docs/HANDOFF-history-core11.md` | handoff lama (core11, riset offset awal) |
 | `dist/` | build output (dibuat dari `build30.bat`; tidak selalu di-commit) |
 

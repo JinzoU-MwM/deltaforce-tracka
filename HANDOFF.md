@@ -104,6 +104,8 @@ struct SharedState {
 
 ---
 
+> **Single source sejak `5867194`:** offset ada di [`Offsets.hpp`](Offsets.hpp) (`namespace DF`); `core.cpp` memakai `DF::...`. Tabel di bawah = referensi/nama lama (nilai sama).
+
 ## 3. Offset game (`namespace off` di `core.cpp`)
 
 ```
@@ -219,14 +221,22 @@ cl /nologo /std:c++17 /O2 /EHsc /I imgui /I imgui\backends overlay_imgui.cpp img
 
 ## 8. Deploy
 
-**Inject (SYSTEM, early)** — user SSH tidak punya hak `MapViewOfFile` (0xC0000022):
+**Inject (SYSTEM, early)** — user SSH tidak punya hak `MapViewOfFile` (`0xC0000022`); detail + checklist: **[`docs/INJECTION.md`](docs/INJECTION.md)**.
 ```bat
+:: watcher: arm SEBELUM game, auto-PID, inject sekali saat shipping exe muncul
+schtasks /create /tn df_watch /tr "C:\Users\User\trackA\watch_inject.bat" /sc once /st 23:59 /ru SYSTEM /rl HIGHEST /f
+schtasks /run /tn df_watch
+
+:: atau one-shot saat game sudah jalan
 schtasks /create /tn dfa_inj /tr "C:\Users\User\trackA\injsys.bat" /sc once /st 23:59 /ru SYSTEM /rl HIGHEST /f
 schtasks /run /tn dfa_inj
 ```
-`injsys.bat` = `dfsecinject.exe <PID> dfcore30.dll > inj30.log 2>&1`.
-
-**Watcher** (inject begitu game start): `watch_inject.bat` loop `tasklist` cari `DeltaForceClient-Win64-Shipping.exe`, lalu inject; jalankan via schtasks SYSTEM.
+- `watch_inject.bat [dll] [timeout]` → `inj_early.log` (`FOUND ...`, `EXIT_pid_..`, `DONE rc=..`); default `dfcore30.dll`, timeout 0.
+- `injsys.bat [dll]` → `inj_sys.log` (`map game st=0x0`, `loader_status=1`, `TOTAL_EXIT=6`).
+- `inj30.bat` untuk game yang sudah jalan; **wajib** SYSTEM.
+- `find_game_pid.bat` menulis `GAME_PID.txt` (count + pids).
+- `TRACKA_DIR` = folder build host (default `%USERPROFILE%\trackA`).
+- `EXIT=6` bukan gagal — cek `map game st=0x00000000` + `loader_status=1`.
 
 **Overlay**:
 - `StartOverlay.bat`: kill overlay, copy `dfimgui_overlay_multi.exe` → `dfimgui_overlay.exe`, start.
@@ -247,7 +257,7 @@ aim.log  : AIM tgt=.. cur=(pitch,yaw) want=(pitch,yaw) d=(0,0)
 
 ## 9. Anti-cheat / batasan (penting)
 
-- Injeksi pertama di proses game berhasil (`map game st=0`, `loader_status=1`). Injeksi berikutnya sering **`MapViewOfFile` 0xC0000022** (manual map diblok). Strategi: **inject awal** via watcher SYSTEM saat game baru start.
+- Injeksi pertama di proses game berhasil (`map game st=0`, `loader_status=1`). Injeksi berikutnya/user-shell sering **`0xC0000022`** (manual map diblok). Penyebab: token medium tanpa `SeDebugPrivilege` + AC `ObRegisterCallbacks` + timing. **SYSTEM+early** = watcher SYSTEM sebelum game start; detail + checklist: [`docs/INJECTION.md`](docs/INJECTION.md).
 - `taskkill` game bisa dilaporkan sukses tapi proses tetap/protected; restart game lewat launcher `D:\Delta Force\Delta Force\DeltaForceClient.exe`.
 - Overlay **harus di session 1** (session game); proses dari SSH/session 0 tidak terlihat dan shm-nya beda namespace. Core `EnsureOverlay`/user StartOverlay adalah jalur yang benar.
 - `shot.exe` menangkap **frame game** (PrintWindow), **bukan layered overlay**; screenshot overlay butuh desktop capture (`GetDC(NULL)`/BitBlt) di session 1.
