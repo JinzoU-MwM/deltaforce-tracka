@@ -173,10 +173,16 @@ static uintptr_t DecryptGWorldMirror(uint64_t raw) {
     uint64_t v; MMove(&v, b, 8); return (uintptr_t)v;
 }
 static uintptr_t GetWorld() {
-    uint64_t plain = R<uint64_t>(g_base + off::GWORLD);
-    if (ValidPtr((uintptr_t)plain) && NameIs((uintptr_t)plain, g_worldTag)) return (uintptr_t)plain;
-    uintptr_t dec = DecryptGWorldMirror(R<uint64_t>(g_base + off::GWORLD_ENC));
-    if (ValidPtr(dec) && NameIs(dec, g_worldTag)) return dec;
+    // Anti-flap: baca GWorld 3x; kalau gagal semua, pakai pointer valid terakhir.
+    static uintptr_t cached = 0;
+    for (int t = 0; t < 3; ++t) {
+        uint64_t plain = R<uint64_t>(g_base + off::GWORLD);
+        if (ValidPtr((uintptr_t)plain) && NameIs((uintptr_t)plain, g_worldTag)) { cached = (uintptr_t)plain; return cached; }
+        uintptr_t dec = DecryptGWorldMirror(R<uint64_t>(g_base + off::GWORLD_ENC));
+        if (ValidPtr(dec) && NameIs(dec, g_worldTag)) { cached = dec; return cached; }
+        if (t < 2) Sleep(0);
+    }
+    if (cached && ValidPtr(cached) && NameIs(cached, g_worldTag)) return cached;
     return 0;
 }
 
@@ -756,7 +762,9 @@ static void Refresh(SharedState& st) {
     if (!w) { st.state = 2; return; }
     uintptr_t level = DPtr(R<uint64_t>(w + off::PERSISTENT_LEVEL));
     uintptr_t gi = DPtr(R<uint64_t>(w + off::OWNING_GI));
-    if (!ValidPtr(level) || !NameIs(level, g_levelTag)) { st.state = 3; return; }
+    // Level: pointer valid sudah cukup. NameIs dilewati kalau resolusi nama gagal
+    // sesaat (FName cache miss) supaya state tidak flap 1<->3.
+    if (!ValidPtr(level)) { st.state = 3; return; }
     if (!ValidPtr(gi)) { st.state = 4; return; }
 
     st.world = w; st.level = level; st.gi = gi;

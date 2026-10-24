@@ -5,9 +5,14 @@
 #include <dxgi.h>
 #include <stdio.h>
 #include <math.h>
+#include <string.h>
+#include <stdlib.h>
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
+#include <dwmapi.h>
+#pragma comment(lib, "dwmapi.lib")
+static bool g_dwmOk = true;
 #include "shared.h"
 static void OLog(const char* s){ FILE* f=nullptr; fopen_s(&f,"ovimg.log","a"); if(f){ fprintf(f,"%s\n",s); fclose(f);} }
 
@@ -34,6 +39,62 @@ static bool g_aim = false;
 static bool g_aimAuto = false;
 static float g_aimFov = 320.f, g_aimStep = 0.35f, g_maxDist = 1000.f;
 static float g_camZ = 0.f, g_fovAdj = 0.f, g_fovAds = 67.f, g_camFwd = 0.f, g_yawOff = 0.f, g_pitchOff = 0.f;
+
+static int cDrawnLive = 0, cHoldLive = 0;
+
+static void ApplyDefaults() {
+    g_esp = true; g_boxes = true; g_names = true; g_dist = true;
+    g_team = false; g_body = true; g_aim = false; g_aimAuto = false;
+    g_aimFov = 320.f; g_aimStep = 0.35f; g_maxDist = 1000.f;
+    g_camZ = 0.f; g_fovAdj = 0.f; g_fovAds = 67.f; g_camFwd = 0.f;
+    g_yawOff = 0.f; g_pitchOff = 0.f;
+}
+
+static void SaveCfg() {
+    FILE* f = nullptr;
+    if (fopen_s(&f, "overlay_cfg.txt", "w") != 0 || !f) return;
+    fprintf(f, "# DF trackA overlay config v31\n");
+    fprintf(f, "esp=%d\nboxes=%d\nnames=%d\ndist=%d\nteam=%d\nbody=%d\naim=%d\naimAuto=%d\n",
+            g_esp, g_boxes, g_names, g_dist, g_team, g_body, g_aim, g_aimAuto);
+    fprintf(f, "aimFov=%.3f\naimStep=%.4f\nmaxDist=%.2f\n", g_aimFov, g_aimStep, g_maxDist);
+    fprintf(f, "camZ=%.3f\nfovAdj=%.3f\nfovAds=%.3f\ncamFwd=%.3f\nyawOff=%.3f\npitchOff=%.3f\n",
+            g_camZ, g_fovAdj, g_fovAds, g_camFwd, g_yawOff, g_pitchOff);
+    fclose(f);
+    OLog("CFG saved");
+}
+
+static void LoadCfg() {
+    FILE* f = nullptr;
+    if (fopen_s(&f, "overlay_cfg.txt", "r") != 0 || !f) { OLog("CFG missing"); return; }
+    char line[160];
+    while (fgets(line, sizeof(line), f)) {
+        char* nl = strpbrk(line, "\r\n"); if (nl) *nl = 0;
+        if (line[0] == '#' || line[0] == 0) continue;
+        char* eq = strchr(line, '='); if (!eq) continue;
+        *eq = 0;
+        const char* k = line; const char* v = eq + 1;
+        float fv = (float)atof(v); int iv = atoi(v);
+        if (!strcmp(k, "esp")) g_esp = iv != 0;
+        else if (!strcmp(k, "boxes")) g_boxes = iv != 0;
+        else if (!strcmp(k, "names")) g_names = iv != 0;
+        else if (!strcmp(k, "dist")) g_dist = iv != 0;
+        else if (!strcmp(k, "team")) g_team = iv != 0;
+        else if (!strcmp(k, "body")) g_body = iv != 0;
+        else if (!strcmp(k, "aim")) g_aim = iv != 0;
+        else if (!strcmp(k, "aimAuto")) g_aimAuto = iv != 0;
+        else if (!strcmp(k, "aimFov")) g_aimFov = fv;
+        else if (!strcmp(k, "aimStep")) g_aimStep = fv;
+        else if (!strcmp(k, "maxDist")) g_maxDist = fv;
+        else if (!strcmp(k, "camZ")) g_camZ = fv;
+        else if (!strcmp(k, "fovAdj")) g_fovAdj = fv;
+        else if (!strcmp(k, "fovAds")) g_fovAds = fv;
+        else if (!strcmp(k, "camFwd")) g_camFwd = fv;
+        else if (!strcmp(k, "yawOff")) g_yawOff = fv;
+        else if (!strcmp(k, "pitchOff")) g_pitchOff = fv;
+    }
+    fclose(f);
+    OLog("CFG loaded");
+}
 
 struct V3 { float x, y, z; };
 
@@ -65,15 +126,38 @@ static SharedState* g_shm = nullptr;
 static uint32_t g_shmVer = 0;
 static MenuCfg* g_menu = nullptr;
 
+// --- anti-blink: snapshot tahan-last-good ---------------------------------
+static SharedState g_lastGood;
+static DWORD       g_lastGoodT = 0;
+static bool        g_snapHas = false;
+static int         g_snapMiss = 0;
+
 static bool Snapshot(SharedState& out) {
     if (!g_shm) return false;
-    for (int t = 0; t < 4; ++t) {
+    // seqlock: spin, jangan Sleep (Sleep(1) bikin frame drop)
+    for (int t = 0; t < 64; ++t) {
         LONG s1 = g_shm->seq;
-        if (s1 & 1) { Sleep(1); continue; }
+        if (s1 & 1) { YieldProcessor(); continue; }
         memcpy(&out, g_shm, sizeof(SharedState));
+        _ReadWriteBarrier();
         LONG s2 = g_shm->seq;
-        if (s1 == s2 && !(s2 & 1)) return out.magic == SHM_MAGIC && out.version >= 22 && out.version <= 30;
+        if (s1 == s2 && !(s2 & 1) &&
+            out.magic == SHM_MAGIC && out.version >= 22 && out.version <= 30) {
+            g_lastGood = out;
+            g_lastGoodT = GetTickCount();
+            g_snapHas = true;
+            g_snapMiss = 0;
+            return true;
+        }
+        YieldProcessor();
     }
+    // gagal baca konsisten: pakai snapshot terakhir (ESP beku, bukan hilang)
+    if (g_snapHas) {
+        out = g_lastGood;
+        ++g_snapMiss;
+        return true;
+    }
+    ++g_snapMiss;
     return false;
 }
 
@@ -85,7 +169,7 @@ static float g_velYaw = 0, g_velPitch = 0, g_velX = 0, g_velY = 0, g_velZ = 0;
 static SPlayer g_pp[128]; static DWORD g_ppT[128]; static int g_ppN = 0;
 
 static void UpdatePrediction() {
-    if (!g_haveState) { g_draw = g_st; return; }
+    if (!g_haveState) { if (g_snapHas) g_draw = g_lastGood; return; }
     DWORD now = GetTickCount();
     bool newSnap = (g_st.seq != g_prevSeq);
     if (newSnap) {
@@ -328,13 +412,8 @@ static void PresentLayered() {
     for (int y = 0; y < H; ++y)
         memcpy(dst + (size_t)y * W * 4, (unsigned char*)m.pData + (size_t)y * m.RowPitch, (size_t)W * 4);
     g_ctx->Unmap(g_stage, 0);
-    for (int i = 0; i < W * H; ++i) {
-        unsigned char* p = dst + (size_t)i * 4;
-        unsigned int a = p[3];
-        p[0] = (unsigned char)((p[0] * a) / 255);
-        p[1] = (unsigned char)((p[1] * a) / 255);
-        p[2] = (unsigned char)((p[2] * a) / 255);
-    }
+    // ImGui blend (SRC_ALPHA / INV_SRC_ALPHA) di target transparan sudah menghasilkan
+    // RGB premultiplied -> loop 2M-piksel per frame tidak perlu (sumber jitter/fps drop).
     HDC screen = GetDC(nullptr);
     POINT pt = { 0, 0 };
     SIZE sz = { W, H };
@@ -374,11 +453,15 @@ static void DrawESP() {
         bool act = g_aim || g_aimAuto || (GetFileAttributesA("C:\Users\User\trackA\aim2.flag") != INVALID_FILE_ATTRIBUTES);
         dl0->AddCircle(ImVec2(W * 0.5f, H * 0.5f), g_aimFov, act ? IM_COL32(0, 255, 140, 160) : IM_COL32(0, 255, 140, 70), 0, 1.6f);
     }
-    static int cDrawn = 0, cTeam = 0, cDist = 0, cOff = 0;
+    static int cDrawn = 0, cTeam = 0, cDist = 0, cOff = 0, cHold = 0;
     static DWORD cT = 0;
+    static SharedState g_lastValid; static DWORD g_lastValidT = 0; static bool g_lastValidHas = false;
     if (!g_haveState) return;
-    const SharedState& st = g_draw;
-    if (st.state != 1 || !st.camValid) return;
+    SharedState st = g_draw;
+    bool okNow = (st.state == 1 && st.camValid);
+    if (okNow) { g_lastValid = st; g_lastValidT = GetTickCount(); g_lastValidHas = true; }
+    else if (g_lastValidHas && (GetTickCount() - g_lastValidT) < 600) { st = g_lastValid; ++cHold; }
+    else return;
     ImDrawList* dl = ImGui::GetBackgroundDrawList();
     for (int i = 0; i < st.playerCount; ++i) {
         const SPlayer& p = st.players[i];
@@ -429,14 +512,16 @@ static void DrawESP() {
         if (g_names) dl->AddText(ImVec2(fx - bw*0.5f, hy - 15.f), out, p.name);
         if (g_dist) { char b[32]; wsprintfA(b, "%dm", (int)p.dist); dl->AddText(ImVec2(fx - bw*0.5f, hy - 1.f), IM_COL32(230,230,150,255), b); }
     }
+    cDrawnLive = cDrawn; cHoldLive = cHold;
     {
         DWORD nw = GetTickCount();
         if (nw - cT >= 1000) {
             cT = nw;
             char lg[192];
-            sprintf_s(lg, "DRAW ply=%d drawn=%d team=%d dist=%d off=%d maxd=%.0f tf=%d", st.playerCount, cDrawn, cTeam, cDist, cOff, g_maxDist, g_team ? 1 : 0);
+            sprintf_s(lg, "DRAW ply=%d drawn=%d team=%d dist=%d off=%d hold=%d miss=%d maxd=%.0f tf=%d",
+                     st.playerCount, cDrawn, cTeam, cDist, cOff, cHold, g_snapMiss, g_maxDist, g_team ? 1 : 0);
             OLog(lg);
-            cDrawn = cTeam = cDist = cOff = 0;
+            cDrawn = cTeam = cDist = cOff = cHold = 0;
         }
     }
 }
@@ -496,6 +581,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     }
     { HANDLE mm = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(MenuCfg), L"DFC6_menu_v1");
       if (mm) g_menu = (MenuCfg*)MapViewOfFile(mm, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(MenuCfg)); }
+    LoadCfg();
     OLog("hotkey: core-only");
     g_hook = SetWindowsHookExW(WH_KEYBOARD_LL, LLKeyboard, GetModuleHandleW(nullptr), 0);
     OLog(g_hook ? "hook ok" : "hook FAIL");
@@ -552,31 +638,103 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (g_open) {
             ImGui::SetNextWindowPos(ImVec2(40, 60));
             ImGui::SetNextWindowSize(ImVec2(430, 620));
-            ImGui::Begin("DF MOD MENU", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
-            ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.f, 1.f), "DF MOD MENU v3 (ImGui)");
-            ImGui::TextDisabled("INSERT = show/hide  |  mouse aktif saat menu");
-            ImGui::SeparatorText("ESP");
-            ImGui::Checkbox("ESP", &g_esp);
-            ImGui::Checkbox("Box", &g_boxes);
-            ImGui::Checkbox("Name", &g_names);
-            ImGui::Checkbox("Distance", &g_dist);
-            ImGui::Checkbox("Team filter (enemy only)", &g_team);
-            ImGui::Checkbox("Body chams", &g_body);
-            ImGui::SeparatorText("Aim");
-            ImGui::Checkbox("Aim assist (RMB)", &g_aim);
-            ImGui::Checkbox("Auto aim", &g_aimAuto);
-            ImGui::SliderFloat("Aim FOV px", &g_aimFov, 20.f, 600.f, "%.0f");
-            ImGui::SliderFloat("Max step", &g_aimStep, 0.05f, 1.5f, "%.2f");
-            ImGui::SeparatorText("Camera");
-            ImGui::SliderFloat("Cam Z", &g_camZ, -50.f, 50.f, "%.1f");
-            ImGui::SliderFloat("FOV adj", &g_fovAdj, -20.f, 20.f, "%.1f");
-            ImGui::SliderFloat("FOV ADS", &g_fovAds, 30.f, 120.f, "%.0f");
-            ImGui::SliderFloat("Cam Fwd", &g_camFwd, -100.f, 100.f, "%.1f");
-            ImGui::SliderFloat("Yaw offset", &g_yawOff, -15.f, 15.f, "%.2f");
-            ImGui::SliderFloat("Pitch offset", &g_pitchOff, -15.f, 15.f, "%.2f");
-            if (ImGui::Button("Calibrate (F9)  - aim at target")) Calibrate();
-            ImGui::SeparatorText("World");
-            ImGui::SliderFloat("Max dist", &g_maxDist, 50.f, 1000.f, "%.0f");
+            ImGui::SetNextWindowPos(ImVec2(40, 60), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowSize(ImVec2(468, 560), ImGuiCond_FirstUseEver);
+            ImGui::Begin("DF TRACK A  -  MOD MENU", nullptr, 0);
+            ImGui::TextColored(ImVec4(0.30f, 0.90f, 1.00f, 1.f), "Delta Force  trackA  v31");
+            ImGui::SameLine();
+            ImGui::TextDisabled("| shm v%u | %.0f fps", g_shmVer, ImGui::GetIO().Framerate);
+            ImGui::TextDisabled("INSERT / Ctrl+Alt+M = show-hide   F9 = calibrate");
+            if (ImGui::BeginTabBar("##dftabs", ImGuiTabBarFlags_None)) {
+
+                if (ImGui::BeginTabItem("ESP")) {
+                    ImGui::Spacing();
+                    ImGui::Checkbox("ESP master", &g_esp);
+                    ImGui::Checkbox("Box", &g_boxes);
+                    ImGui::Checkbox("Name", &g_names);
+                    ImGui::Checkbox("Distance", &g_dist);
+                    ImGui::Checkbox("Body chams (skeleton)", &g_body);
+                    ImGui::SeparatorText("Filter");
+                    ImGui::Checkbox("Team filter (enemy only)", &g_team);
+                    ImGui::SliderFloat("Max dist", &g_maxDist, 50.f, 1000.f, "%.0f m");
+                    ImGui::SeparatorText("Status");
+                    ImGui::Text("players=%d  drawn=%d", g_st.playerCount, cDrawnLive);
+                    ImGui::Text("camp=%d  team=%d  cam=%d", g_st.localCamp, g_st.localTeam, g_st.camValid);
+                    ImGui::TextDisabled("hold=%d  snapmiss=%d", cHoldLive, g_snapMiss);
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("AIM")) {
+                    ImGui::Spacing();
+                    ImGui::Checkbox("Aim assist (hold RMB)", &g_aim);
+                    ImGui::Checkbox("Auto aim (always)", &g_aimAuto);
+                    ImGui::SeparatorText("Tuning");
+                    ImGui::SliderFloat("Aim FOV (px)", &g_aimFov, 20.f, 600.f, "%.0f px");
+                    ImGui::SliderFloat("Max step (deg/8ms)", &g_aimStep, 0.05f, 1.50f, "%.2f");
+                    ImGui::SeparatorText("Target");
+                    ImGui::TextDisabled("head bone = 32, path = ROTATION_INPUT");
+                    if (ImGui::Button("Center FOV to screen")) g_aimFov = (float)H * 0.30f;
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset aim")) { g_aimFov = 320.f; g_aimStep = 0.35f; }
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("CAMERA")) {
+                    ImGui::Spacing();
+                    ImGui::SliderFloat("Cam Z", &g_camZ, -50.f, 50.f, "%.1f");
+                    ImGui::SliderFloat("Cam Fwd", &g_camFwd, -100.f, 100.f, "%.1f");
+                    ImGui::SliderFloat("FOV adj", &g_fovAdj, -20.f, 20.f, "%.1f");
+                    ImGui::SliderFloat("FOV ADS", &g_fovAds, 30.f, 120.f, "%.0f");
+                    ImGui::SeparatorText("Offset W2S");
+                    ImGui::SliderFloat("Yaw offset", &g_yawOff, -15.f, 15.f, "%.2f");
+                    ImGui::SliderFloat("Pitch offset", &g_pitchOff, -15.f, 15.f, "%.2f");
+                    ImGui::SeparatorText("");
+                    if (ImGui::Button("Calibrate (F9) - aim at target", ImVec2(-1, 0))) Calibrate();
+                    ImGui::TextDisabled("cam mode=%d  fov=%.1f", g_st.camMode, g_st.camFov);
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("SETTINGS")) {
+                    ImGui::Spacing();
+                    if (ImGui::Button("Save config", ImVec2(140, 0))) SaveCfg();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Load config", ImVec2(140, 0))) LoadCfg();
+                    ImGui::SameLine();
+                    if (ImGui::Button("Defaults", ImVec2(120, 0))) ApplyDefaults();
+                    ImGui::SeparatorText("Overlay");
+                    ImGui::TextDisabled("config file: overlay_cfg.txt (folder overlay)");
+                    ImGui::TextDisabled("log: ovimg.log");
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("Hotkey: INSERT / Ctrl+Alt+M lewat core (PollKeys)");
+                    ImGui::TextDisabled("Fallback file: menu.flag (ToggleMenu.bat)");
+                    ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("INFO")) {
+                    ImGui::Spacing();
+                    ImGui::Text("shm version : %u", g_shmVer);
+                    ImGui::Text("state       : %d  (1=ok 2=no world 3=level 4=GI)", g_st.state);
+                    ImGui::Text("actors      : %d", g_st.actorCount);
+                    ImGui::Text("players     : %d", g_st.playerCount);
+                    ImGui::Text("camera      : valid=%d mode=%d fov=%.1f", g_st.camValid, g_st.camMode, g_st.camFov);
+                    ImGui::Text("local       : camp=%d team=%d dead=%d", g_st.localCamp, g_st.localTeam, g_st.selfDead);
+                    ImGui::SeparatorText("Health");
+                    ImGui::Text("snapshot miss : %d", g_snapMiss);
+                    ImGui::Text("hold frames   : %d", cHoldLive);
+                    ImGui::Text("drawn (1s)    : %d", cDrawnLive);
+                    ImGui::Text("fps           : %.0f", ImGui::GetIO().Framerate);
+                    if (g_st.playerCount > 0) {
+                        ImGui::SeparatorText("Players");
+                        for (int i = 0; i < g_st.playerCount && i < 8; ++i) {
+                            const SPlayer& p = g_st.players[i];
+                            ImGui::Text("[%d] %-20s camp=%d dist=%.0f", i, p.name[0] ? p.name : "?", p.camp, p.dist);
+                        }
+                    }
+                    ImGui::EndTabItem();
+                }
+
+                ImGui::EndTabBar();
+            }
             ImGui::End();
         }
         ImGui::Render();
@@ -585,7 +743,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         g_ctx->ClearRenderTargetView(g_rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         PresentLayered();
-        Sleep(16);
+        if (!g_dwmOk || FAILED(DwmFlush())) Sleep(16);   // sinkron 1 present / refresh
     }
 
     if (g_hook) UnhookWindowsHookEx(g_hook);
