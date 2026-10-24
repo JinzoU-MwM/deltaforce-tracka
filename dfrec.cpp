@@ -11,15 +11,38 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <math.h>
+#include <string.h>
 #include "Offsets.hpp"
 
 static uintptr_t g_base = 0, g_blocks = 0;
-static FILE* g_log = nullptr;
 
+// Log ditulis per-baris dengan CreateFileA + FILE_SHARE_READ/WRITE supaya
+// file tetap bisa dibaca saat probe berjalan (fopen "w" mengunci eksklusif).
 static void L(const char* fmt, ...) {
-    if (!g_log) return;
-    va_list ap; va_start(ap, fmt); vfprintf(g_log, fmt, ap); va_end(ap);
-    fputc('\n', g_log); fflush(g_log);
+    char buf[512];
+    va_list ap; va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf) - 2, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof(buf) - 2) n = (int)sizeof(buf) - 2;
+    buf[n++] = '\r'; buf[n++] = '\n';
+    // fallback nama: instance lama bisa masih mengunci rec.log (tidak bisa unload)
+    static const char* paths[] = {
+        "C:\\Users\\User\\trackA\\rec.log",
+        "C:\\Users\\User\\trackA\\rec2.log",
+        "C:\\Users\\User\\trackA\\rec3.log",
+        "C:\\Users\\User\\trackA\\rec4.log",
+    };
+    HANDLE f = INVALID_HANDLE_VALUE;
+    for (int i = 0; i < 4; ++i) {
+        f = CreateFileA(paths[i], GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                        nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f != INVALID_HANDLE_VALUE) break;
+    }
+    if (f == INVALID_HANDLE_VALUE) return;
+    SetFilePointer(f, 0, nullptr, FILE_END);
+    DWORD w = 0; WriteFile(f, buf, (DWORD)n, &w, nullptr);
+    CloseHandle(f);
 }
 
 static void MMove(void* d, const void* s, size_t n) { unsigned char* dd=(unsigned char*)d; const unsigned char* ss=(const unsigned char*)s; for (size_t i=0;i<n;++i) dd[i]=ss[i]; }
@@ -108,11 +131,76 @@ static void DumpCandidates(uintptr_t pawn) {
     L("# CAND total=%d", found);
 }
 
+// Bongkar objek weapon: pointer -> kelas, dan float yang masuk rentang statistik.
+// Rentang dipilih supaya tidak banjir: recoil 0.05..30, RPM 60..1500, spread 0..60,
+// ammo 0..400, dan skala kecil 0.01..5.
+static void DumpWeapon(uintptr_t obj, const char* tag) {
+    L("# WEAPON %s obj=%p", tag, (void*)obj);
+    char cn[96]; ClassName(obj, cn, 96);
+    L("#   class=%s", cn);
+    int nptr = 0, nflt = 0;
+    for (uint32_t off = 0; off <= 0x800; off += 8) {
+        uintptr_t p = DPtr(R<uint64_t>(obj + off));
+        if (ValidPtr(p)) {
+            char pn[96]; ClassName(p, pn, 96);
+            if (pn[0] && pn[0] != '?') { L("WPTR off=0x%X obj=%p class=%s", off, (void*)p, pn); ++nptr; }
+            else if (pn[0] == '?') { L("WPTR off=0x%X obj=%p class=?", off, (void*)p); ++nptr; }
+        }
+        if (nptr > 40) break;
+    }
+    for (uint32_t off = 0; off <= 0x800; off += 4) {
+        float f = R<float>(obj + off);
+        if (!(f == f)) continue;
+        float a = fabsf(f);
+        if (a < 0.0001f) continue;
+        const char* tagf = nullptr;
+        if (a >= 60.f && a <= 1500.f)      tagf = "rpm?";
+        else if (a >= 0.05f && a <= 30.f)  tagf = "recoil?";
+        else if (a >= 0.0001f && a < 0.05f) tagf = "small?";
+        if (tagf) { L("WFLT off=0x%X v=%.4f %s", off, f, tagf); ++nflt; }
+        if (nflt > 60) break;
+    }
+    L("# WEAPON end ptr=%d flt=%d", nptr, nflt);
+}
+
+// ---- Watcher perubahan: temukan field yang bereaksi saat menembak ----
+// Snapshot int32/float32 0x0..0x600 pada objek weapon, bandingkan tiap tick,
+// log HANYA saat LMB ditekan (supaya tidak banjir). Ini yang mengaitkan offset
+// dengan event: ammo turun, shot index naik, recoil terakumulasi, dll.
+#define WATCH_MAX 0x600
+static uint8_t g_snapA[WATCH_MAX];
+static uint8_t g_snapB[WATCH_MAX];
+static uintptr_t g_snapObj = 0;
+static DWORD g_chgT[WATCH_MAX / 4];
+
+static void WatchTick(uintptr_t obj, bool firing) {
+    if (!ValidPtr(obj)) return;
+    if (obj != g_snapObj) {
+        g_snapObj = obj;
+        ReadMem(g_snapA, obj, WATCH_MAX);
+        return;
+    }
+    if (!ReadMem(g_snapB, obj, WATCH_MAX)) return;
+    if (firing) {
+        for (uint32_t off = 0; off + 4 <= WATCH_MAX; off += 4) {
+            int32_t ov, nv; float of, nf;
+            MMove(&ov, g_snapA + off, 4); MMove(&nv, g_snapB + off, 4);
+            MMove(&of, g_snapA + off, 4); MMove(&nf, g_snapB + off, 4);
+            if (ov == nv) continue;
+            DWORD now = GetTickCount();
+            if (now - g_chgT[off / 4] < 90) continue;   // dedupe
+            g_chgT[off / 4] = now;
+            bool intLike = (ov > -100000 && ov < 100000);
+            bool fltLike = (of == of && nf == nf && fabsf(of) < 1e6f && fabsf(nf) < 1e6f);
+            if (intLike) L("CHG off=0x%X int %d -> %d", off, ov, nv);
+            else if (fltLike) L("CHG off=0x%X flt %.4f -> %.4f", off, of, nf);
+        }
+    }
+    MMove(g_snapA, g_snapB, WATCH_MAX);
+}
+
 static DWORD WINAPI Worker(LPVOID) {
-    g_log = nullptr;
-    fopen_s(&g_log, "rec.log", "w");
-    if (!g_log) fopen_s(&g_log, "C:\\Users\\User\\trackA\\rec.log", "w");
-    if (!g_log) return 0;
+    DeleteFileA("C:\\Users\\User\\trackA\\rec.log");
 
     HMODULE h = GetModuleHandleW(L"DeltaForceClient-Win64-Shipping.exe");
     if (!h) h = GetModuleHandleW(nullptr);
@@ -149,10 +237,19 @@ static DWORD WINAPI Worker(LPVOID) {
             }
             prevCtrl = ctrl; prevIn = in; prevT = now; lmbPrev = lmb;
 
+            uintptr_t w1 = ValidPtr(pawn) ? DPtr(R<uint64_t>(pawn + 0x1788)) : 0;
+            uintptr_t w2 = ValidPtr(pawn) ? DPtr(R<uint64_t>(pawn + 0xD30)) : 0;
+            WatchTick(w1, lmb);
+            if (w2 != w1) WatchTick(w2, lmb);
+
             if (ValidPtr(pawn) && pawn != lastPawn && dumped < 6) {
                 lastPawn = pawn; ++dumped;
                 L("# pawn=%p pc=%p", (void*)pawn, (void*)pc);
                 DumpCandidates(pawn);
+                uintptr_t wp1 = DPtr(R<uint64_t>(pawn + 0xD30));
+                uintptr_t wp2 = DPtr(R<uint64_t>(pawn + 0x1788));
+                if (ValidPtr(wp1)) DumpWeapon(wp1, "pawn+D30");
+                if (ValidPtr(wp2) && wp2 != wp1) DumpWeapon(wp2, "pawn+1788");
             }
         }
         Sleep(8);
@@ -160,10 +257,22 @@ static DWORD WINAPI Worker(LPVOID) {
     return 0;
 }
 
+static void Marker(const char* tag) {
+    HANDLE f = CreateFileA("C:\\Users\\User\\trackA\\dfrec_hit.txt", GENERIC_WRITE, FILE_SHARE_READ,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    SetFilePointer(f, 0, nullptr, FILE_END);
+    DWORD w = 0; WriteFile(f, tag, (DWORD)strlen(tag), &w, nullptr);
+    WriteFile(f, "\r\n", 2, &w, nullptr);
+    CloseHandle(f);
+}
+
 BOOL APIENTRY DllMain(HMODULE hMod, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hMod);
-        CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
+        Marker("attach");
+        HANDLE th = CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
+        Marker(th ? "worker-started" : "worker-fail");
     }
     return TRUE;
 }
