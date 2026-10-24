@@ -115,6 +115,8 @@ Nama kelas yang dicari di `dfscan`/`dfdump`: `Weapon`, `WeaponData`, `Recoil`, `
 
 `overlay_imgui.cpp` — `AimTick()`:
 - Target = player terdekat crosshair dalam `g_aimFov` (px), body part (5bc33ee; sebelumnya head bone 32).
+- `AimBone`: 0=Auto, 1=Head(32), 2=Neck(5), 3=Chest(3), 4=Pelvis(1), 5=Legs(58/62).
+- `g_fileTrig` default OFF (fix `aim2.flag` nyangkut yang membuat aim selalu nyala); `SanitizeCam()` menolak `camMode!=2`/jarak >3000/fov<60 dan rebuild dari `controlRot+selfPos`; FOV circle/aim center pakai client rect `g_cx/g_cy/g_cw/g_ch` (`UpdateGeometry`: `GetClientRect`+`ClientToScreen`).
 - Filter team/maxDist; `lastSwitch` 120 ms; tulis `AimCmd` absolute yaw/pitch; `mode=0`.
 - **Tidak ada kompensasi recoil** — saat firing, `ControlRotation` naik, crosshair/target bergeser; aim hanya mengejar head.
 
