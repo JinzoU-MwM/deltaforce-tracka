@@ -277,3 +277,25 @@ weapon=... data=...
 - `shared.h` — `AimCmd`, `SPlayer`, `SharedState`.
 - `Offsets.hpp` — `PlayerController`, `PlayerCameraManager`, `APlayerState`.
 - `docs/ESP-BEST-PRACTICES.md` §6 (aim), `docs/INJECTION.md`.
+
+---
+
+## 9. Status implementasi (2026-10-24, overlay v31.3 + core31)
+
+| Butir | Status | Detail / bukti |
+|---|---|---|
+| §4.1 kompensasi via `RotationInput` | **done** | Overlay hitung `want = controlRot − pull×8ms`, kirim lewat `AimCmd`; core `AimLoop` (mode 0) menulis `RotationInput`. Tidak menulis `ControlRotation`, tidak menulis data senjata. |
+| §6.1 dasar pada `ControlRotation` actual | **done** | `g_draw.controlRot` (bukan `camRot`/POV yang kena ViewPunch). Log: `REC ctrl=(359.62,265.95) want=(359.57,265.95) d=(-0.05,-0.00)` → 6 deg/s × 8 ms = 0.048°. |
+| §6.1 tulis hanya saat firing | **done** | State machine `firing` dengan hysteresis 120 ms; opsi "Hanya saat menembak (LMB)" default ON. |
+| §6.1 humanisasi | **done** | ramp 1.15× untuk 200 ms pertama (first-shot kick) lalu 1.0; clamp v ≤ 30 deg/s, h ≤ ±15 deg/s; jitter ±0.0256° tetap dari core. |
+| §6.1 per-senjata / pattern | **belum** | Butuh `dfrec` (P0 #1) untuk `CurrentWeapon`/`ShotIndex`/`FireRate`. Untuk sementara: preset laju SMG 5/0.5, AR 7/1.5, LMG 9/2, DMR 4/0.5 (kalibrasi di range). |
+| §6.1 InputPitchScale/YawScale | **diserap** | Slider deg/s berfungsi sebagai kalibrasi skala; tidak perlu offset baru. |
+| §6.2 tanpa `WH_KEYBOARD_LL` | **done** | Hook dihapus; hotkey dibaca `GetAsyncKeyState` (INSERT / Ctrl+Alt+M) + jalur `keyEdges` dari core. `strings` binary: 0 kemunculan `LLKeyboard`. |
+| §6.2 tanpa `VirtualProtect` per write | **done** | `WriteMem` kini fast-path `MMove` di dalam SEH; `VirtualProtect` hanya fallback bila halaman read-only. |
+| §6.2 tulis hanya `RotationInput` | **done** | mode 0 default; mode 1 (`ControlRotation`) tidak dipakai overlay. |
+| §6.2 log/flag off di rilis | **sebagian** | Toggle "Tulis log debug" (SETTINGS) → `OLog` jadi no-op. Nama shm/window/`DFC6_menu_v1` masih plaintext. |
+| §6.3 performa | **done** | 1 snapshot + 1 tulis cmd per frame; tanpa alokasi di loop; `Sleep`/`DwmFlush` pacing. |
+| §6.4 verifikasi | **sebagian** | Matematika kompensasi terverifikasi dari log; A/B recoil on/off di range **belum** (butuh sesi menembak). |
+
+Guard robust yang dipasang (mencegah "asal jalan"):
+`sstate==1 && camValid && !selfDead && !menu_open && game_foreground && (!fireOnly || firing)`, clamp laju, proteksi NaN, dan reset state saat trigger dilepas.

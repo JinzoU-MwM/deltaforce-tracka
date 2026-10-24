@@ -46,13 +46,19 @@ static bool ReadMem(void* dst, uintptr_t src, size_t n) {
     __except (EXCEPTION_EXECUTE_HANDLER) { MZero(dst, n); return false; }
 }
 template <class T> static T R(uintptr_t a) { T v{}; ReadMem(&v, a, sizeof(T)); return v; }
+// Tulis memori: fast-path TANPA VirtualProtect (RotationInput/ControlRotation ada
+// di region RW). VirtualProtect hanya fallback bila halaman ternyata read-only.
+// (docs/ANTI-RECOIL-RESEARCH §6.2: hindari NtProtectVirtualMemory tiap write)
 static bool WriteMem(void* dst, const void* src, size_t n) {
+    __try { MMove(dst, src, n); return true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { /* read-only: fallback di bawah */ }
     DWORD old = 0;
     if (!VirtualProtect(dst, n, PAGE_READWRITE, &old)) return false;
-    __try { MMove(dst, src, n); }
-    __except (EXCEPTION_EXECUTE_HANDLER) { VirtualProtect(dst, n, old, &old); return false; }
+    bool ok = false;
+    __try { MMove(dst, src, n); ok = true; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { ok = false; }
     VirtualProtect(dst, n, old, &old);
-    return true;
+    return ok;
 }
 
 static bool ValidPtr(uintptr_t p) { return p > 0x10000 && p < 0x7FFFFFFFFFFFULL; }
