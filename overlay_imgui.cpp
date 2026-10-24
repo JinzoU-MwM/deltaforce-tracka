@@ -11,6 +11,7 @@
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
 #include <dwmapi.h>
+#include <tlhelp32.h>
 #pragma comment(lib, "dwmapi.lib")
 static bool g_dwmOk = true;
 #include "shared.h"
@@ -22,6 +23,13 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 static int W = 1920, H = 1080;          // permukaan gambar (layar penuh)
 static int g_cx = 0, g_cy = 0, g_cw = 1920, g_ch = 1080;   // client rect game (screen coords)
 static float g_cFovScale = 1.f;
+
+static double NowSec() {
+    static LARGE_INTEGER f{}; static bool init = false;
+    if (!init) { QueryPerformanceFrequency(&f); init = true; }
+    LARGE_INTEGER c; QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)f.QuadPart;
+}
 static ID3D11Device* g_dev = nullptr;
 static ID3D11DeviceContext* g_ctx = nullptr;
 static ID3D11Texture2D* g_tex = nullptr;
@@ -47,22 +55,11 @@ static int cDrawnLive = 0, cHoldLive = 0;
 static int g_camReject = 0;
 static float g_predMs = 0.f;      // 0 = prediksi OFF (anti-jitter default)
 static bool g_fileTrig = false;   // aim2.flag sebagai pemicu aim (default OFF)
+static bool g_debugLog = true;    // log detail (matikan untuk rilis)
 static int  g_ovEnable = -1;      // nilai enable terakhir yang KITA tulis
 static DWORD g_ovStamp = 0;
 static int  g_ovWhy = 0;          // 0=off 1=auto 2=flag 3=rmb
 static int  g_aimBone = 1;        // 0=Auto, 1=Head, 2=Neck, 3=Chest, 4=Pelvis, 5=Legs
-// anti-recoil (docs/ANTI-RECOIL-RESEARCH §4.1): kompensasi via RotationInput,
-// dihitung dari ControlRotation di shm -> AimCmd -> core AimLoop.
-static bool  g_recEnable = false;
-static bool  g_recFireOnly = true;
-static float g_recV = 6.f;        // pull vertikal, derajat/detik
-static float g_recH = 0.f;        // pull horizontal, derajat/detik (boleh negatif)
-static int   g_recActiveLog = 0;
-static bool  g_debugLog = true;   // log detail (matikan untuk rilis, docs §6.2)
-// state machine anti-recoil
-struct RecState { bool firing; DWORD fireStart; DWORD lastFire; int shots; };
-static RecState g_rec{};
-static const DWORD kRecReleaseMs = 120;   // hysteresis lepas trigger
 static int  g_aimBoneUsed = -1;   // bone yang benar-benar dipakai (debug)
 static int  g_forceTab = -1;      // -1 bebas; 0..4 dipaksa via tab.txt
 static int  g_forceTabPrev = -1;
@@ -86,8 +83,6 @@ static void SaveCfg() {
     fprintf(f, "camZ=%.3f\nfovAdj=%.3f\nfovAds=%.3f\ncamFwd=%.3f\nyawOff=%.3f\npitchOff=%.3f\n",
             g_camZ, g_fovAdj, g_fovAds, g_camFwd, g_yawOff, g_pitchOff);
     fprintf(f, "predMs=%.2f\nfileTrig=%d\naimBone=%d\nstartTab=%d\n", g_predMs, g_fileTrig ? 1 : 0, g_aimBone, g_startTab);
-    fprintf(f, "recEnable=%d\nrecFireOnly=%d\nrecV=%.2f\nrecH=%.2f\n",
-            g_recEnable ? 1 : 0, g_recFireOnly ? 1 : 0, g_recV, g_recH);
     fclose(f);
     OLog("CFG saved");
 }
@@ -124,10 +119,6 @@ static void LoadCfg() {
         else if (!strcmp(k, "fileTrig")) g_fileTrig = iv != 0;
         else if (!strcmp(k, "aimBone")) g_aimBone = iv;
         else if (!strcmp(k, "startTab")) g_startTab = iv;
-        else if (!strcmp(k, "recEnable")) g_recEnable = iv != 0;
-        else if (!strcmp(k, "recFireOnly")) g_recFireOnly = iv != 0;
-        else if (!strcmp(k, "recV")) g_recV = fv;
-        else if (!strcmp(k, "recH")) g_recH = fv;
     }
     fclose(f);
     OLog("CFG loaded");
@@ -145,11 +136,14 @@ static float Dist3(const SVec3& a, const SVec3& b) {
 static void SanitizeCam(SharedState& st) {
     bool hasSelf = (fabsf(st.selfPos.x) + fabsf(st.selfPos.y)) > 1.f;
     if (!hasSelf) return;
+    // camMode: 2 = fallback (controlRot+selfPos), 11..16 = POV asli dari CameraManager.
+    // POV asli JANGAN dibangun ulang (docs ESP-JITTER §2B) — hanya divalidasi.
+    bool isPov = (st.camMode >= 11 && st.camMode <= 16);
     bool bad = false;
     if (!st.camValid) bad = true;
-    if (st.camMode != 2) bad = true;                       // POV kandidat = template
+    if (!isPov && st.camMode != 2) bad = true;             // mode tak dikenal
     if (Dist3(st.camLoc, st.selfPos) > 3000.f) bad = true; // jauh dari pemain = template
-    if (st.camFov < 60.f || st.camFov > 120.f) bad = true; // template fov=50
+    if (st.camFov < 55.f || st.camFov > 125.f) bad = true;
     if (bad) {
         st.camLoc = SVec3{ st.selfPos.x, st.selfPos.y, st.selfPos.z + 65.f };
         st.camRot = st.controlRot;
@@ -162,8 +156,37 @@ static void SanitizeCam(SharedState& st) {
 
 // Geometri proyeksi mengikuti CLIENT GAME, bukan resolusi monitor.
 // (docs/ESP-BEST-PRACTICES §3.3)
+// Cari window game lewat PID (judul bisa berubah / launcher punya window lain).
+static DWORD GamePid() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W pe{ sizeof(pe) }; DWORD pid = 0;
+    if (Process32FirstW(snap, &pe)) do {
+        if (!_wcsicmp(pe.szExeFile, L"DeltaForceClient-Win64-Shipping.exe")) { pid = pe.th32ProcessID; break; }
+    } while (Process32NextW(snap, &pe));
+    CloseHandle(snap); return pid;
+}
+struct EnumCtx { DWORD pid; HWND best; LONG area; };
+static BOOL CALLBACK EnumProc(HWND h, LPARAM lp) {
+    EnumCtx* c = (EnumCtx*)lp;
+    DWORD wpid = 0; GetWindowThreadProcessId(h, &wpid);
+    if (wpid != c->pid) return TRUE;
+    RECT rc{}; if (!GetClientRect(h, &rc)) return TRUE;
+    LONG a = (rc.right - rc.left) * (rc.bottom - rc.top);
+    if (a > c->area) { c->area = a; c->best = h; }
+    return TRUE;
+}
+static HWND FindGameWindow() {
+    DWORD pid = GamePid();
+    if (!pid) return nullptr;
+    EnumCtx c{ pid, nullptr, 0 };
+    EnumWindows(EnumProc, (LPARAM)&c);
+    return c.best;
+}
+
 static void UpdateGeometry() {
-    if (!g_gameWnd || !IsWindow(g_gameWnd)) return;
+    if (!g_gameWnd || !IsWindow(g_gameWnd)) g_gameWnd = FindGameWindow();
+    if (!g_gameWnd) return;
     RECT rc{}; POINT org{ 0, 0 };
     if (!GetClientRect(g_gameWnd, &rc)) return;
     if (!ClientToScreen(g_gameWnd, &org)) return;
@@ -218,7 +241,7 @@ static bool Snapshot(SharedState& out) {
         _ReadWriteBarrier();
         LONG s2 = g_shm->seq;
         if (s1 == s2 && !(s2 & 1) &&
-            out.magic == SHM_MAGIC && out.version >= 22 && out.version <= 30) {
+            out.magic == SHM_MAGIC && out.version >= 22 && out.version <= 31) {
             g_lastGood = out;
             g_lastGoodT = GetTickCount();
             g_snapHas = true;
@@ -356,51 +379,8 @@ static void AimTick() {
     bool active = g_aimAuto || autoFlag || (g_aim && (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
     g_ovWhy = g_aimAuto ? 1 : (autoFlag ? 2 : (g_aim ? 3 : 0));
 
-    // ---- Anti-recoil (docs §4.1 & §6.1): kompensasi lewat RotationInput ----
-    // Syarat aktif: fitur on, state game valid, pemain hidup, menu tertutup,
-    // game window foreground, dan (opsional) LMB sedang ditekan.
-    bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
-    DWORD nowT = GetTickCount();
-    if (lmb) { if (!g_rec.firing) { g_rec.firing = true; g_rec.fireStart = nowT; g_rec.shots = 0; } g_rec.lastFire = nowT; }
-    else if (g_rec.firing && (nowT - g_rec.lastFire) > kRecReleaseMs) { g_rec.firing = false; }
-    bool foreground = (g_gameWnd && GetForegroundWindow() == g_gameWnd) || (GetForegroundWindow() == g_hwnd);
-    bool recOn = g_recEnable
-              && (!g_recFireOnly || g_rec.firing)
-              && g_draw.state == 1 && g_draw.camValid && !g_draw.selfDead
-              && !g_open
-              && foreground;
-    g_recActiveLog = recOn ? 1 : 0;
-    // rate per tick core (8 ms); clamp ke batas aman
-    float vRate = g_recV, hRate = g_recH;
-    if (!(vRate > 0.f)) vRate = 0.f;
-    if (vRate > 30.f) vRate = 30.f;
-    if (hRate > 15.f) hRate = 15.f; if (hRate < -15.f) hRate = -15.f;
-    // ramp: 200 ms pertama sedikit lebih kuat (first-shot kick), lalu 100%
-    float ramp = 1.f;
-    if (recOn && g_rec.firing) {
-        DWORD dtf = nowT - g_rec.fireStart;
-        ramp = (dtf < 200) ? 1.15f : 1.f;
-    }
-    float recDP = recOn ? (vRate * 0.008f * ramp) : 0.f;
-    float recDY = recOn ? (hRate * 0.008f * ramp) : 0.f;
-    if (!(recDP == recDP)) recDP = 0.f;
-    if (!(recDY == recDY)) recDY = 0.f;
-
-    if (!active && !recOn) { WriteAimCmd(false, 0, 0); return; }
-    if (!active && recOn) {
-        float wy2 = g_draw.controlRot.yaw - recDY;
-        float wp2 = g_draw.controlRot.pitch - recDP;
-        WriteAimCmd(true, wy2, wp2);
-        static DWORD recLogT = 0; DWORD nwl = GetTickCount();
-        if (nwl - recLogT >= 1000) {
-            recLogT = nwl;
-            char rl[192];
-            sprintf_s(rl, "REC ctrl=(%.2f,%.2f) want=(%.2f,%.2f) d=(%.2f,%.2f) ramp=%.2f v=%.1f h=%.1f",
-                      g_draw.controlRot.pitch, g_draw.controlRot.yaw, wp2, wy2, -recDP, -recDY, ramp, vRate, hRate);
-            OLog(rl);
-        }
-        return;
-    }
+    // Anti-recoil sudah di-revert (permintaan); aim assist yang menangani.
+    if (!active) { WriteAimCmd(false, 0, 0); return; }
     float best = 1e9f; int bi = -1; float tx = 0, ty = 0, tz = 0;
     for (int i = 0; i < g_draw.playerCount; ++i) {
         const SPlayer& p = g_draw.players[i];
@@ -431,7 +411,7 @@ static void AimTick() {
     float dx = tx - g_draw.camLoc.x, dy = ty - g_draw.camLoc.y, dz = tz - g_draw.camLoc.z;
     float wy = atan2f(dy, dx) * 180.f / 3.14159265f;
     float wp = atan2f(dz, sqrtf(dx * dx + dy * dy)) * 180.f / 3.14159265f;
-    WriteAimCmd(true, wy - recDY, wp - recDP);
+    WriteAimCmd(true, wy, wp);
 }
 
 static void MaybeSpawnShot() {
@@ -709,12 +689,10 @@ static void DrawESP() {
                      st.playerCount, cDrawn, cTeam, cDist, cOff, cHold, g_snapMiss, g_maxDist, g_team ? 1 : 0);
             OLog(lg);
             char lg2[224];
-            sprintf_s(lg2, "JIT drot=%.2fdeg dloc=%.1f mode=%d reject=%d pred=%.0fms hold=%d aimEn=%d ovEn=%d why=%d client=%dx%d+%d+%d bone=%s rec=%d v=%.1f h=%.1f fire=%d",
+            sprintf_s(lg2, "JIT drot=%.2fdeg dloc=%.1f mode=%d reject=%d pred=%.0fms hold=%d aimEn=%d ovEn=%d why=%d client=%dx%d+%d+%d bone=%s",
                       jMax, jLocMax, st.camMode, g_camReject, g_predMs, cHold,
                       (g_shm ? (int)g_shm->cmd.enable : -1), g_ovEnable, g_ovWhy,
-                      g_cw, g_ch, g_cx, g_cy, AimBoneName(g_aimBone),
-                      g_recActiveLog, g_recV, g_recH,
-                      (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0);
+                      g_cw, g_ch, g_cx, g_cy, AimBoneName(g_aimBone));
             OLog(lg2);
             jMax = 0; jLocMax = 0;
             cDrawn = cTeam = cDist = cOff = cHold = 0;
@@ -732,6 +710,7 @@ static const unsigned char kName27[24] = {0x16,0x35,0x39,0x3B,0x36,0x06,0x17,0x0
 static const unsigned char kName28[24] = {0x16,0x35,0x39,0x3B,0x36,0x06,0x17,0x09,0x0E,0x1C,0x74,0x09,0x32,0x33,0x37,0x19,0x3B,0x39,0x32,0x3F,0x74,0x2C,0x82,0x00};
 static const unsigned char kName29[24] = {0x16,0x35,0x39,0x3B,0x36,0x06,0x17,0x09,0x0E,0x1C,0x74,0x09,0x32,0x33,0x37,0x19,0x3B,0x39,0x32,0x3F,0x74,0x2C,0x83,0x00};
 static const unsigned char kName30[24] = {0x16,0x35,0x39,0x3B,0x36,0x06,0x17,0x09,0x0E,0x1C,0x74,0x09,0x32,0x33,0x37,0x19,0x3B,0x39,0x32,0x3F,0x74,0x2C,0x84,0x00};
+static const unsigned char kName31[24] = {0x16,0x35,0x39,0x3B,0x36,0x06,0x17,0x09,0x0E,0x1C,0x74,0x09,0x32,0x33,0x37,0x19,0x3B,0x39,0x32,0x3F,0x74,0x2C,0x85,0x00};
 
 int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     W = GetSystemMetrics(SM_CXSCREEN); H = GetSystemMetrics(SM_CYSCREEN);
@@ -754,9 +733,9 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     st.Colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.06f, 0.08f, 0.97f);
     ImGui_ImplWin32_Init(g_hwnd); ImGui_ImplDX11_Init(g_dev, g_ctx);
 
-    static const unsigned char* kAllNames[9] = { kName22, kName23, kName24, kName25, kName26, kName27, kName28, kName29, kName30 };
+    static const unsigned char* kAllNames[10] = { kName22, kName23, kName24, kName25, kName26, kName27, kName28, kName29, kName30, kName31 };
     {
-        for (int vi = 8; vi >= 0; --vi) {
+        for (int vi = 9; vi >= 0; --vi) {
             wchar_t nm[64]; int si = 0;
             for (; si < 32 && kAllNames[vi][si]; ++si) nm[si] = (wchar_t)(kAllNames[vi][si] ^ 0x5A);
             nm[si] = 0;
@@ -767,7 +746,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             if (!view) { char lg[64]; sprintf_s(lg, "view fail vi=%d err=%lu", vi, GetLastError()); OLog(lg); CloseHandle(map); continue; }
             SharedState* cand = (SharedState*)view;
             { char lg[96]; sprintf_s(lg, "cand vi=%d magic=%08X ver=%u state=%d players=%d", vi, cand->magic, cand->version, cand->state, cand->playerCount); OLog(lg); }
-            if (cand->magic == SHM_MAGIC && cand->version >= 22 && cand->version <= 30 && cand->state <= 4 && cand->playerCount >= 0 && cand->playerCount <= 128) {
+            if (cand->magic == SHM_MAGIC && cand->version >= 22 && cand->version <= 31 && cand->state <= 4 && cand->playerCount >= 0 && cand->playerCount <= 128) {
                 g_shm = cand; g_shmVer = cand->version;
                 char lg[64]; sprintf_s(lg, "shm v%u state=%d players=%d", cand->version, cand->state, cand->playerCount); OLog(lg);
                 break;
@@ -913,20 +892,6 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
                     if (ImGui::Button("Center FOV to screen")) g_aimFov = (float)H * 0.30f;
                     ImGui::SameLine();
                     if (ImGui::Button("Reset aim")) { g_aimFov = 320.f; g_aimStep = 0.35f; }
-                    ImGui::SeparatorText("No recoil (RotationInput)");
-                    ImGui::Checkbox("No recoil", &g_recEnable);
-                    ImGui::Checkbox("Hanya saat menembak (LMB)", &g_recFireOnly);
-                    ImGui::SliderFloat("Pull vertikal", &g_recV, 0.f, 30.f, "%.1f deg/s");
-                    ImGui::SliderFloat("Pull horizontal", &g_recH, -15.f, 15.f, "%.1f deg/s");
-                    ImGui::TextDisabled("Preset awal (kalibrasi di range):");
-                    if (ImGui::Button("SMG 5/0.5")) { g_recV = 5.f;  g_recH = 0.5f; }
-                    ImGui::SameLine();
-                    if (ImGui::Button("AR 7/1.5")) { g_recV = 7.f;  g_recH = 1.5f; }
-                    ImGui::SameLine();
-                    if (ImGui::Button("LMG 9/2")) { g_recV = 9.f;  g_recH = 2.f; }
-                    ImGui::SameLine();
-                    if (ImGui::Button("DMR 4/0.5")) { g_recV = 4.f;  g_recH = 0.5f; }
-                    ImGui::TextDisabled("kompensasi = ControlRotation - pull*8ms, via AimCmd");
                     ImGui::EndTabItem();
                 }
 

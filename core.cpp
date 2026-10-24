@@ -800,19 +800,6 @@ static void Refresh(SharedState& st) {
     if (ValidPtr(pc)) {
         localPawn = DPtr(R<uint64_t>(pc + off::ACK_PAWN));
         cam = DPtr(R<uint64_t>(pc + off::CAM_MGR));
-        if (ValidPtr(cam)) {
-            uintptr_t povs[5] = { cam + 0x2C5E0, cam + off::CAM_CACHE, cam + 0x2DEC0, cam + 0x2DEF0, cam + 0x2F310 };
-            for (int ci = 0; ci < 5 && camMode == 0; ++ci) {
-                uintptr_t pov = povs[ci];
-                SVec3 l = R<SVec3>(pov);
-                SRot r = R<SRot>(pov + 0xC);
-                float f = R<float>(pov + 0x18);
-                if (FiniteF(l.x) && FiniteF(l.y) && FiniteF(l.z) &&
-                    (l.x * l.x + l.y * l.y) > 1.0f && f > 30.f && f < 140.f) {
-                    st.camLoc = l; st.camRot = r; st.camFov = f; st.camValid = 1; camMode = 1 + ci;
-                }
-            }
-        }
         // selfPos/localCamp selalu diisi, terlepas dari sumber kamera.
         if (ValidPtr(localPawn)) {
             uintptr_t ps = DPtr(R<uint64_t>(localPawn + off::PLAYERSTATE));
@@ -821,6 +808,24 @@ static void Refresh(SharedState& st) {
             if (ValidPtr(r0)) {
                 SVec3 sp0 = R<SVec3>(r0 + off::REL_LOCATION);
                 if (PosOK(sp0)) st.selfPos = sp0;
+            }
+        }
+        if (ValidPtr(cam)) {
+            uintptr_t povs[5] = { cam + 0x2C5E0, cam + off::CAM_CACHE, cam + 0x2DEC0, cam + 0x2DEF0, cam + 0x2F310 };
+            for (int ci = 0; ci < 5 && camMode == 0; ++ci) {
+                uintptr_t pov = povs[ci];
+                SVec3 l = R<SVec3>(pov);
+                SRot r = R<SRot>(pov + 0xC);
+                float f = R<float>(pov + 0x18);
+                bool nearSelf = true;
+                if (PosOK(st.selfPos)) {
+                    float ddx = l.x - st.selfPos.x, ddy = l.y - st.selfPos.y, ddz = l.z - st.selfPos.z;
+                    nearSelf = (ddx * ddx + ddy * ddy + ddz * ddz) < (3000.f * 3000.f);
+                }
+                if (FiniteF(l.x) && FiniteF(l.y) && FiniteF(l.z) &&
+                    (l.x * l.x + l.y * l.y) > 1.0f && f > 55.f && f < 125.f && nearSelf) {
+                    st.camLoc = l; st.camRot = r; st.camFov = f; st.camValid = 1; camMode = 11 + ci;   // 11..15 = POV kandidat (bukan fallback)
+                }
             }
         }
         if (camMode == 0 && ValidPtr(localPawn)) {   // fallback hanya bila POV tidak ada
@@ -877,7 +882,7 @@ static void Refresh(SharedState& st) {
             SVec3 l = R<SVec3>(cam + g_povOff);
             SRot r = R<SRot>(cam + g_povOff + 0xC);
             float fv = R<float>(cam + g_povOff + 0x18);
-            st.camLoc = l; st.camRot = r; st.camFov = fv; st.camValid = 1; camMode = 4;
+            st.camLoc = l; st.camRot = r; st.camFov = fv; st.camValid = 1; camMode = 16;  // auto-scan POV
         }
     }
 #ifdef PROBE_ONLY
@@ -887,7 +892,7 @@ static void Refresh(SharedState& st) {
     // Validasi sumber kamera: POV kandidat (mode 1/3/4/5) sering berisi template
     // (0,8000,5000 fov 50). Kalau jauh dari pemain atau FOV template -> pakai
     // controlRot + selfPos (mode 2) supaya kamera tidak berganti-ganti antar publish.
-    if (camMode != 2 && camMode != 0 && PosOK(st.selfPos)) {
+    if (camMode != 2 && camMode != 0 && camMode < 11 && PosOK(st.selfPos)) {
         float dx = st.camLoc.x - st.selfPos.x, dy = st.camLoc.y - st.selfPos.y, dz = st.camLoc.z - st.selfPos.z;
         if ((dx * dx + dy * dy + dz * dz) > (3000.f * 3000.f) || st.camFov < 60.f || st.camFov > 120.f) {
             st.camLoc = SVec3{ st.selfPos.x, st.selfPos.y, st.selfPos.z + 65.f };

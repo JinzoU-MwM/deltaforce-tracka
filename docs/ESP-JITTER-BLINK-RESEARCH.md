@@ -183,3 +183,20 @@ Metrik yang sudah ada di kode: `jMax`/`jLocMax` (delta rotasi/lokasi kamera per 
 - TranslatedWorld/float precision: https://blog.csdn.net/qqQQqsadfj/article/details/161398650
 - Interpolated frame/camera VP jitter: https://banming.github.io/GameEngine/Unreal/optimize/interpolated-frame-high-fps.html
 - Repo: `overlay_imgui.cpp` (`SanitizeCam`, `W2S`, `UpdatePrediction`, `DrawESP`, `PresentLayered`), `core.cpp` (`povs[5]`, fallback, `FillBones`, `p.pos`), `docs/ESP-BEST-PRACTICES.md`, `docs/ANTI-RECOIL-RESEARCH.md`.
+
+---
+
+## 7. Status implementasi (2026-10-24, core32/shm V31 + overlay v31.4)
+
+| Butir | Status | Bukti |
+|---|---|---|
+| §2B `camMode=2` ambigu | **fixed** | core: POV kandidat → `camMode 11..15`, auto-scan → `16`, fallback tetap `2`. Overlay `SanitizeCam` membedakan: POV asli **tidak** dibangun ulang, hanya divalidasi. |
+| §2A validasi kandidat POV | **fixed** | kandidat hanya diterima bila `fov 55..125` **dan** jarak ke `selfPos` < 3000 (selfPos kini dihitung **sebelum** loop POV, bukan sesudah). |
+| §2G blink (state flap) | **fixed di sumber** | core32: `GetWorld` retry+cache, gate nama level dilonggarkan, `selfPos` dihitung di luar pemilihan kamera → `ovimg.log`: `hold=0` (sebelumnya 40–55), `miss=0`, `DRAW drawn=710`. |
+| Anti-recoil | **di-revert** atas permintaan (aim assist sudah ada) | `JIT` tanpa field `rec=`; `grep -c rec= → 0` di baris baru |
+| shm versi | **V31** | `shm v31 state=1 players=6`; overlay scan 22..31, prefer tertinggi; core30 (V30) tetap hidup tapi diabaikan |
+| §2A POV asli (CameraCachePrivate) | **belum** | `mode=2` masih fallback: tidak ada kandidat POV yang lolos validasi di build ini. Perlu probe `dfcam4`/auto-scan POV untuk menemukan offset POV render sesungguhnya (termasuk ViewPunch). |
+| §3.2 swapchain/DirectComposition | **belum** | masih layered + `UpdateLayeredWindow` (alpha loop sudah dibuang, pacing `DwmFlush`) |
+| §P1 interpolasi posisi 25 Hz→110 fps | **belum** | — |
+
+Catatan: dengan `hold=0` dan `miss=0`, jalur "blink karena state invalid" sudah tidak aktif lagi; sisa goyangan (bila ada) murni berasal dari sumber kamera fallback yang tidak mengandung ViewPunch/shake.
