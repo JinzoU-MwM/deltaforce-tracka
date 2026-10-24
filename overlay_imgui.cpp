@@ -444,6 +444,17 @@ static void MaybeSpawnShot() {
         CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
     }
 }
+// Toggle terpusat: satu tekan tombol = satu toggle.
+// Sebelumnya keyEdges (core) + polling lokal sama-sama men-toggle -> dobel.
+static DWORD g_toggleLock = 0;
+static void SetOpen(bool open);          // fwd
+static void ToggleMenu() {
+    DWORD now = GetTickCount();
+    if (now - g_toggleLock < 300) return;   // debounce
+    g_toggleLock = now;
+    SetOpen(!g_open);
+}
+
 static void SetOpen(bool open) {
     g_open = open;
     if (open) { g_forceTab = g_startTab; g_forceTabPrev = -1; }
@@ -789,7 +800,7 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
         if (GetFileAttributesA("C:\\Users\\User\\trackA\\menu.flag") != INVALID_FILE_ATTRIBUTES) {
             DeleteFileA("C:\\Users\\User\\trackA\\menu.flag");
             OLog("FLAG toggle");
-            SetOpen(!g_open);
+            ToggleMenu();
         }
 
 
@@ -813,15 +824,20 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
             if (ks != lastKs) {
                 lastKs = ks;
                 int bits = g_shm ? g_shm->keyEdges : 0;
-                if ((bits & 1) || (bits & 8)) SetOpen(!g_open);
+                if ((bits & 1) || (bits & 8)) ToggleMenu();
             }
-            static bool pIns = false, pCombo = false;
-            bool ins = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
-            bool combo = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) &&
-                         ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) &&
-                         ((GetAsyncKeyState('M') & 0x8000) != 0);
-            if ((ins && !pIns) || (combo && !pCombo)) SetOpen(!g_open);
-            pIns = ins; pCombo = combo;
+            // Dua jalur (core keyEdges + polling lokal) menuju SATU ToggleMenu()
+            // yang ber-debounce 300 ms -> tidak dobel, dan tetap jalan walau
+            // salah satu jalur mati (mis. game tidak fokus saat core PollKeys).
+            {
+                static bool pIns = false, pCombo = false;
+                bool ins = (GetAsyncKeyState(VK_INSERT) & 0x8000) != 0;
+                bool combo = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) &&
+                             ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) &&
+                             ((GetAsyncKeyState('M') & 0x8000) != 0);
+                if ((ins && !pIns) || (combo && !pCombo)) ToggleMenu();
+                pIns = ins; pCombo = combo;
+            }
         }
         AimTick();
         MaybeSpawnShot();
