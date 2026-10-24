@@ -800,7 +800,7 @@ static void Refresh(SharedState& st) {
         }
         if (ValidPtr(localPawn)) {
             uintptr_t ps = DPtr(R<uint64_t>(localPawn + off::PLAYERSTATE));
-            if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + off::CAMP_TRUE); st.localTeam = R<int32_t>(ps + 0x66C); st.selfDead = 0; }
+            if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + off::CAMP_TRUE); st.localTeam = R<int32_t>(ps + off::TEAMID); st.selfDead = 0; }
             uintptr_t r0 = DPtr(R<uint64_t>(localPawn + off::ROOT_COMP));
             if (ValidPtr(r0)) {
                 SVec3 ctw = R<SVec3>(r0 + off::COMPONENT_TW + 0x10);
@@ -950,7 +950,7 @@ static void Refresh(SharedState& st) {
             if (!p.name[0]) ReadFStringToBuf(ps + 0x488, p.name, 64);
             if (SContains(p.name, "BP_") || SContains(p.name, "PropertyReplication") || SContains(p.name, "Default__")) p.name[0] = 0;
             p.camp = R<int32_t>(ps + off::CAMP_TRUE);   // match team id (0 = local team)
-            p.team = R<int32_t>(ps + 0x66C);   // squad slot 1..4
+            p.team = R<int32_t>(ps + off::TEAMID);   // squad slot 1..4
             p.bot = 0;
         } else {
             SCopy(p.name, 64, "Target");
@@ -1001,7 +1001,7 @@ static void Refresh(SharedState& st) {
                         if (!p.name[0]) ReadFStringToBuf(ps + 0x488, p.name, 64);
                         if (SContains(p.name, "BP_") || SContains(p.name, "PropertyReplication") || SContains(p.name, "Default__")) p.name[0] = 0;
                         p.camp = R<int32_t>(ps + off::CAMP_TRUE);
-                        p.team = R<int32_t>(ps + 0x66C);
+                        p.team = R<int32_t>(ps + off::TEAMID);
                     } else {
                         SCopy(p.name, 64, cn);
                         p.camp = -1; p.team = 0;
