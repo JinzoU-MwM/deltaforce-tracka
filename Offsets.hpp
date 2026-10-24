@@ -129,3 +129,98 @@ namespace UEPointers
     constexpr uintptr_t Engine = 0x0;
     constexpr uintptr_t World = 0x0;
 }
+
+// ---------------------------------------------------------------------------
+// Delta Force 1.14.0.772 — offset build-specific (Track A).
+// Satu-satunya sumber angka offset untuk core.cpp & tool. Update di sini saja.
+// Format: RVA relative terhadap base image (g_base), tag pointer: raw & 0xFFFFFFFFFFFF.
+// ---------------------------------------------------------------------------
+namespace DF
+{
+namespace Globals
+{
+    constexpr uintptr_t GWorld      = 0x1D9E4E78;   // UWorld** (plain)
+    constexpr uintptr_t GWorldMirror = 0x1D9E6E78;  // UWorld** (encrypted mirror)
+    constexpr uintptr_t GNamesBlocks = 0x1E5A7788;  // FNamePool blocks
+}
+
+namespace UObject_
+{
+    constexpr uintptr_t ClassPrivate = 0x08;
+    constexpr uintptr_t NamePrivate  = 0x1C;
+}
+
+namespace UWorld_
+{
+    constexpr uintptr_t PersistentLevel = 0xF8;
+    constexpr uintptr_t OwningGameInstance = 0x190;
+    constexpr uintptr_t Levels          = 0x158;    // TArray<ULevel*>
+}
+
+namespace ULevel_
+{
+    constexpr uintptr_t Actors = 0x98;              // TArray<AActor*>; count at +8
+}
+
+namespace UGameInstance_
+{
+    constexpr uintptr_t LocalPlayers = 0x38;        // TArray<ULocalPlayer*>
+}
+
+namespace ULocalPlayer_
+{
+    constexpr uintptr_t PlayerController = 0x30;
+}
+
+namespace UPlayerController_
+{
+    constexpr uintptr_t AcknowledgedPawn = 0x3F0;
+    constexpr uintptr_t PlayerCameraManager = 0x408;
+    constexpr uintptr_t ControlRotation = 0x3D8;    // FRotator (pitch,yaw,roll)
+    constexpr uintptr_t RotationInput   = 0x570;    // FRotator — aim path (stealth)
+}
+
+namespace AActor_
+{
+    constexpr uintptr_t RootComponent = 0x180;
+    constexpr uintptr_t PlayerState   = 0x390;
+}
+
+namespace USceneComponent_
+{
+    constexpr uintptr_t RelativeLocation = 0x168;
+    constexpr uintptr_t ComponentToWorld = 0x210;   // quat @+0, trans @+0x10
+}
+
+namespace ACharacter_
+{
+    constexpr uintptr_t Mesh = 0x3D0;               // USkeletalMeshComponent*
+}
+
+namespace USkeletalMeshComponent_
+{
+    constexpr uintptr_t BoneArray = 0x760;          // ptr; count at +8
+    constexpr uintptr_t BoneStride = 0x30;
+    constexpr uintptr_t BoneLocalPos = 0x10;        // inside bone entry
+}
+
+namespace APlayerState_
+{
+    constexpr uintptr_t PlayerName = 0x478;         // FString
+    constexpr uintptr_t Camp       = 0x660;         // verified V15 (faction)
+    constexpr uintptr_t TeamId     = 0x66C;
+    constexpr uintptr_t CampAlt    = 0x670;         // alt/lobby layout
+}
+
+namespace UCameraManager_
+{
+    constexpr uintptr_t CameraCacheCandidate = 0x30870; // POV candidate (unverified)
+    constexpr uintptr_t PovA = 0x2C5E0;
+    constexpr uintptr_t PovB = 0x2DEC0;
+    constexpr uintptr_t PovC = 0x2DEF0;
+    constexpr uintptr_t PovD = 0x2F310;
+}
+
+// tag helper (UE5 tagged pointer)
+constexpr uint64_t PtrTagMask = 0xFFFFFFFFFFFFULL;
+} // namespace DF

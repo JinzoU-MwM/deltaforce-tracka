@@ -64,30 +64,40 @@ static bool PosOK(const SVec3& p) {
            (p.x * p.x + p.y * p.y) > 1.0f;
 }
 
+// Offset TUNGGAL: didefinisikan di Offsets.hpp (namespace DF). Tidak ada angka di sini.
+#include "Offsets.hpp"
 namespace off {
-    constexpr uint64_t GWORLD = 0x1D9E4E78;
-    constexpr uint64_t GWORLD_ENC = 0x1D9E6E78;
-    constexpr uint64_t GNAMES_BLOCKS = 0x1E5A7788;
-    constexpr uint32_t CLASSPRIVATE = 0x08;
-    constexpr uint32_t NAMEPRIVATE = 0x1C;
-    constexpr uint32_t PERSISTENT_LEVEL = 0xF8;
-    constexpr uint32_t OWNING_GI = 0x190;
-    constexpr uint32_t LEVEL_ACTORS = 0x98;
-    constexpr uint32_t LOCALPLAYERS = 0x38;
-    constexpr uint32_t LOCAL_PC = 0x30;
-    constexpr uint32_t ACK_PAWN = 0x3F0;
-    constexpr uint32_t CAM_MGR = 0x408;
-    constexpr uint32_t ROOT_COMP = 0x180;
-    constexpr uint32_t REL_LOCATION = 0x168;
-    constexpr uint32_t COMPONENT_TW = 0x210;
-    constexpr uint32_t PLAYERSTATE = 0x390;
-    constexpr uint32_t PLAYERNAME = 0x478;
-    constexpr uint32_t CAMP = 0x670;
-    constexpr uint32_t TEAMID = 0x66C;
-    constexpr uint32_t IS_BOT = 0x39E;
-    constexpr uint32_t CAM_CACHE = 0x30870;
-    constexpr uint32_t CONTROL_ROT = 0x3D8;
-    constexpr uint32_t ROTATION_INPUT = 0x570;
+    using namespace DF;
+
+    constexpr uint64_t GWORLD         = DF::Globals::GWorld;
+    constexpr uint64_t GWORLD_ENC     = DF::Globals::GWorldMirror;
+    constexpr uint64_t GNAMES_BLOCKS  = DF::Globals::GNamesBlocks;
+    constexpr uint32_t CLASSPRIVATE   = (uint32_t)DF::UObject_::ClassPrivate;
+    constexpr uint32_t NAMEPRIVATE    = (uint32_t)DF::UObject_::NamePrivate;
+    constexpr uint32_t PERSISTENT_LEVEL = (uint32_t)DF::UWorld_::PersistentLevel;
+    constexpr uint32_t OWNING_GI      = (uint32_t)DF::UWorld_::OwningGameInstance;
+    constexpr uint32_t LEVEL_ACTORS   = (uint32_t)DF::ULevel_::Actors;
+    constexpr uint32_t LOCALPLAYERS   = (uint32_t)DF::UGameInstance_::LocalPlayers;
+    constexpr uint32_t LOCAL_PC       = (uint32_t)DF::ULocalPlayer_::PlayerController;
+    constexpr uint32_t ACK_PAWN       = (uint32_t)DF::UPlayerController_::AcknowledgedPawn;
+    constexpr uint32_t CAM_MGR        = (uint32_t)DF::UPlayerController_::PlayerCameraManager;
+    constexpr uint32_t ROOT_COMP      = (uint32_t)DF::AActor_::RootComponent;
+    constexpr uint32_t REL_LOCATION   = (uint32_t)DF::USceneComponent_::RelativeLocation;
+    constexpr uint32_t COMPONENT_TW   = (uint32_t)DF::USceneComponent_::ComponentToWorld;
+    constexpr uint32_t PLAYERSTATE    = (uint32_t)DF::AActor_::PlayerState;
+    constexpr uint32_t PLAYERNAME     = (uint32_t)DF::APlayerState_::PlayerName;
+    constexpr uint32_t CAMP           = (uint32_t)DF::APlayerState_::CampAlt;
+    constexpr uint32_t CAMP_TRUE      = (uint32_t)DF::APlayerState_::Camp;
+    constexpr uint32_t TEAMID         = (uint32_t)DF::APlayerState_::TeamId;
+    constexpr uint32_t IS_BOT         = 0x39E;
+    constexpr uint32_t CAM_CACHE      = (uint32_t)DF::UCameraManager_::CameraCacheCandidate;
+    constexpr uint32_t CONTROL_ROT    = (uint32_t)DF::UPlayerController_::ControlRotation;
+    constexpr uint32_t ROTATION_INPUT = (uint32_t)DF::UPlayerController_::RotationInput;
+    constexpr uint32_t MESH           = (uint32_t)DF::ACharacter_::Mesh;
+    constexpr uint32_t BONES          = (uint32_t)DF::USkeletalMeshComponent_::BoneArray;
+    constexpr uint32_t BONE_STRIDE    = (uint32_t)DF::USkeletalMeshComponent_::BoneStride;
+    constexpr uint32_t MESH_ASSET     = 0xEB0;
+    constexpr uint32_t SKEL_BONETREE  = 0x38;
 }
 
 
@@ -190,14 +200,14 @@ static void DumpBody(uintptr_t pawn) {
     FILE* f = nullptr; fopen_s(&f, "C:\\Users\\User\\trackA\\body.txt", "a");
     if (!f) return;
     uintptr_t ps = DPtr(R<uint64_t>(pawn + off::PLAYERSTATE));
-    int team = ValidPtr(ps) ? R<int32_t>(ps + 0x660) : -1;
+    int team = ValidPtr(ps) ? R<int32_t>(ps + off::CAMP_TRUE) : -1;
     fprintf(f, "\n=== PAWN %p ps=%p team=%d ===\n", (void*)pawn, (void*)ps, team);
     SVec3 ppos{};
     uintptr_t root = DPtr(R<uint64_t>(pawn + off::ROOT_COMP));
     if (ValidPtr(root)) ppos = R<SVec3>(root + off::REL_LOCATION);
     fprintf(f, "root=%p pos=(%.1f,%.1f,%.1f)\n", (void*)root, ppos.x, ppos.y, ppos.z);
     { char pc[104]; ClassNameToBuf(pawn, pc, 104); fprintf(f, "pawnClass=%s\n", pc); }
-    { static bool g_bn = false; if (!g_bn) { g_bn = true; uintptr_t mm = R<uintptr_t>(pawn + 0x3D0); if (ValidPtr(mm)) DumpBoneNames(mm, f); DumpSkeletonFull(pawn, f); } }
+    { static bool g_bn = false; if (!g_bn) { g_bn = true; uintptr_t mm = R<uintptr_t>(pawn + off::MESH); if (ValidPtr(mm)) DumpBoneNames(mm, f); DumpSkeletonFull(pawn, f); } }
     DumpBones(pawn, f);
     for (uint32_t o = 0x100; o <= 0xA00; o += 8) {
         uintptr_t p = DPtr(R<uint64_t>(pawn + o));
@@ -268,8 +278,8 @@ static void DumpMeshArrays(uintptr_t p, const char* tag, FILE* f) {
         fprintf(f, "  BONEOFF off=0x%X ptr=%p cnt=%d max=%d\n", bo, (void*)bp, bc, bm);
         if (ValidPtr(bp) && bc > 0 && bc < 2000) {
             for (int i = 0; i < 4 && i < bc; ++i) {
-                float x = R<float>(bp + (uint64_t)i*0x30 + 0x10), y = R<float>(bp + (uint64_t)i*0x30 + 0x14), z = R<float>(bp + (uint64_t)i*0x30 + 0x18);
-                float q0 = R<float>(bp + (uint64_t)i*0x30), q1 = R<float>(bp + (uint64_t)i*0x30 + 4), q2 = R<float>(bp + (uint64_t)i*0x30 + 8), q3 = R<float>(bp + (uint64_t)i*0x30 + 12);
+                float x = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x10), y = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x14), z = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x18);
+                float q0 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE), q1 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 4), q2 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 8), q3 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 12);
                 fprintf(f, "    b%d t=(%.2f,%.2f,%.2f) q=(%.2f,%.2f,%.2f,%.2f)\n", i, x, y, z, q0, q1, q2, q3);
             }
         }
@@ -292,9 +302,9 @@ static void DumpMeshArrays(uintptr_t p, const char* tag, FILE* f) {
     if (bestPtr) {
         fprintf(f, "  BEST off=0x%X ptr=%p cnt=%d\n", bestOff, (void*)bestPtr, best);
         for (int i = 0; i < 10; ++i) {
-            float q0 = R<float>(bestPtr + (uint64_t)i*0x30), q1 = R<float>(bestPtr + (uint64_t)i*0x30 + 4);
-            float q2 = R<float>(bestPtr + (uint64_t)i*0x30 + 8), q3 = R<float>(bestPtr + (uint64_t)i*0x30 + 12);
-            float x = R<float>(bestPtr + (uint64_t)i*0x30 + 0x10), y = R<float>(bestPtr + (uint64_t)i*0x30 + 0x14), z = R<float>(bestPtr + (uint64_t)i*0x30 + 0x18);
+            float q0 = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE), q1 = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE + 4);
+            float q2 = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE + 8), q3 = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE + 12);
+            float x = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE + 0x10), y = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE + 0x14), z = R<float>(bestPtr + (uint64_t)i*off::BONE_STRIDE + 0x18);
             fprintf(f, "    B%d t=(%.1f,%.1f,%.1f) q=(%.3f,%.3f,%.3f,%.3f)\n", i, x, y, z, q0, q1, q2, q3);
         }
     }
@@ -313,7 +323,7 @@ static void DumpActorsMeshes(uintptr_t arr, int32_t cnt) {
         char anc[104]; ClassNameToBuf(a, anc, 104);
         if (anc[0] && anc[0] != '?')
             fprintf(f, "ACT %p pos=(%.1f,%.1f,%.1f) class=%s\n", (void*)a, pos.x, pos.y, pos.z, anc);
-        uintptr_t m3 = DPtr(R<uint64_t>(a + 0x3D0));
+        uintptr_t m3 = DPtr(R<uint64_t>(a + off::MESH));
         if (ValidPtr(m3)) {
             char mn[104]; ClassNameToBuf(m3, mn, 104);
             fprintf(f, "  M3D0 %p class=%s\n", (void*)m3, mn);
@@ -423,11 +433,11 @@ static void FindGObjectsAndDump() {
 
 
 static void DumpBoneNames(uintptr_t mesh, FILE* f) {
-    uintptr_t asset = R<uintptr_t>(mesh + 0xEB0);
+    uintptr_t asset = R<uintptr_t>(mesh + off::MESH_ASSET);
     if (!ValidPtr(asset)) { fprintf(f, "BONENAMES asset invalid\n"); return; }
     uintptr_t skel = R<uintptr_t>(asset + 0x60);
     if (!ValidPtr(skel)) { fprintf(f, "BONENAMES skel invalid asset=%p\n", (void*)asset); return; }
-    uintptr_t bt = R<uintptr_t>(skel + 0x38);
+    uintptr_t bt = R<uintptr_t>(skel + off::SKEL_BONETREE);
     int32_t cnt = R<int32_t>(skel + 0x40);
     fprintf(f, "BONENAMES asset=%p skel=%p tree=%p cnt=%d\n", (void*)asset, (void*)skel, (void*)bt, cnt);
     if (!ValidPtr(bt) || cnt <= 0 || cnt > 500) return;
@@ -453,11 +463,11 @@ static void DumpBoneNames(uintptr_t mesh, FILE* f) {
 
 
 static void DumpSkeletonFull(uintptr_t pawn, FILE* f) {
-    uintptr_t mesh = DPtr(R<uint64_t>(pawn + 0x3D0));
+    uintptr_t mesh = DPtr(R<uint64_t>(pawn + off::MESH));
     if (!ValidPtr(mesh)) { fprintf(f, "SKEL no mesh\n"); return; }
-    uintptr_t asset = DPtr(R<uint64_t>(mesh + 0xEB0));
+    uintptr_t asset = DPtr(R<uint64_t>(mesh + off::MESH_ASSET));
     uintptr_t skel = ValidPtr(asset) ? DPtr(R<uint64_t>(asset + 0x60)) : 0;
-    uintptr_t bt = ValidPtr(skel) ? DPtr(R<uint64_t>(skel + 0x38)) : 0;
+    uintptr_t bt = ValidPtr(skel) ? DPtr(R<uint64_t>(skel + off::SKEL_BONETREE)) : 0;
     int32_t cnt = ValidPtr(skel) ? R<int32_t>(skel + 0x40) : 0;
     fprintf(f, "SKEL mesh=%p asset=%p skel=%p bt=%p cnt=%d\n", (void*)mesh, (void*)asset, (void*)skel, (void*)bt, cnt);
     if (ValidPtr(bt) && cnt > 0) {
@@ -478,14 +488,14 @@ static void DumpSkeletonFull(uintptr_t pawn, FILE* f) {
             }
         }
     }
-    uintptr_t bp = R<uintptr_t>(mesh + 0x760);
-    int32_t bc = R<int32_t>(mesh + 0x760 + 8);
+    uintptr_t bp = R<uintptr_t>(mesh + off::BONES);
+    int32_t bc = R<int32_t>(mesh + off::BONES + 8);
     fprintf(f, "BONES ptr=%p cnt=%d\n", (void*)bp, bc);
     if (ValidPtr(bp) && bc > 0) {
-        float qx=R<float>(mesh+0x210),qy=R<float>(mesh+0x214),qz=R<float>(mesh+0x218),qw=R<float>(mesh+0x21C);
-        float tx=R<float>(mesh+0x220),ty=R<float>(mesh+0x224),tz=R<float>(mesh+0x228);
+        float qx=R<float>(mesh+off::COMPONENT_TW),qy=R<float>(mesh+off::COMPONENT_TW+4),qz=R<float>(mesh+off::COMPONENT_TW+8),qw=R<float>(mesh+off::COMPONENT_TW+12);
+        float tx=R<float>(mesh+off::COMPONENT_TW+0x10),ty=R<float>(mesh+off::COMPONENT_TW+0x14),tz=R<float>(mesh+off::COMPONENT_TW+0x18);
         for (int i = 0; i < bc && i < 80; ++i) {
-            float lx=R<float>(bp+(uint64_t)i*0x30+0x10), ly=R<float>(bp+(uint64_t)i*0x30+0x14), lz=R<float>(bp+(uint64_t)i*0x30+0x18);
+            float lx=R<float>(bp+(uint64_t)i*off::BONE_STRIDE+0x10), ly=R<float>(bp+(uint64_t)i*off::BONE_STRIDE+0x14), lz=R<float>(bp+(uint64_t)i*off::BONE_STRIDE+0x18);
             float wx,wy,wz; QRot(qx,qy,qz,qw,lx,ly,lz,wx,wy,wz);
             fprintf(f, "BT i=%d local=(%.1f,%.1f,%.1f) world=(%.1f,%.1f,%.1f)\n", i, lx,ly,lz, wx+tx,wy+ty,wz+tz);
         }
@@ -493,19 +503,19 @@ static void DumpSkeletonFull(uintptr_t pawn, FILE* f) {
 }
 
 static void DumpBones(uintptr_t actor, FILE* f) {
-    uintptr_t mesh = R<uintptr_t>(actor + 0x3D0);
+    uintptr_t mesh = R<uintptr_t>(actor + off::MESH);
     if (!ValidPtr(mesh)) return;
     char mc[104]; ClassNameToBuf(mesh, mc, 104);
     uintptr_t root = DPtr(R<uint64_t>(actor + off::ROOT_COMP));
     SVec3 ppos{}; if (ValidPtr(root)) ppos = R<SVec3>(root + off::REL_LOCATION);
     fprintf(f, "CHAR %p mesh=%p class=%s pos=(%.1f,%.1f,%.1f)\n", (void*)actor, (void*)mesh, mc, ppos.x, ppos.y, ppos.z);
     {
-        float cq0=R<float>(mesh+0x210), cq1=R<float>(mesh+0x214), cq2=R<float>(mesh+0x218), cq3=R<float>(mesh+0x21C);
-        float ct0=R<float>(mesh+0x220), ct1=R<float>(mesh+0x224), ct2=R<float>(mesh+0x228);
+        float cq0=R<float>(mesh+off::COMPONENT_TW), cq1=R<float>(mesh+off::COMPONENT_TW+4), cq2=R<float>(mesh+off::COMPONENT_TW+8), cq3=R<float>(mesh+off::COMPONENT_TW+12);
+        float ct0=R<float>(mesh+off::COMPONENT_TW+0x10), ct1=R<float>(mesh+off::COMPONENT_TW+0x14), ct2=R<float>(mesh+off::COMPONENT_TW+0x18);
         fprintf(f, "  CTW210 t=(%.1f,%.1f,%.1f) q=(%.3f,%.3f,%.3f,%.3f)\n", ct0,ct1,ct2,cq0,cq1,cq2,cq3);
         uintptr_t cap = DPtr(R<uint64_t>(actor + 0x108));
         if (ValidPtr(cap)) {
-            float kx=R<float>(cap+0x220), ky=R<float>(cap+0x224), kz=R<float>(cap+0x228);
+            float kx=R<float>(cap+off::COMPONENT_TW+0x10), ky=R<float>(cap+off::COMPONENT_TW+0x14), kz=R<float>(cap+off::COMPONENT_TW+0x18);
             fprintf(f, "  CAP108 p=%p CTW t=(%.1f,%.1f,%.1f)\n", (void*)cap, kx,ky,kz);
         }
     }
@@ -519,13 +529,13 @@ static void DumpBones(uintptr_t actor, FILE* f) {
         float minz = 1e9f, maxz = -1e9f;
         int n = c < 10 ? c : 10;
         for (int i = 0; i < c && i < 400; ++i) {
-            float z = R<float>(bp + (uint64_t)i*0x30 + 0x18);
+            float z = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x18);
             if (z == z) { if (z < minz) minz = z; if (z > maxz) maxz = z; }
         }
         for (int i = 0; i < n; ++i) {
-            float q0 = R<float>(bp + (uint64_t)i*0x30), q1 = R<float>(bp + (uint64_t)i*0x30 + 4);
-            float q2 = R<float>(bp + (uint64_t)i*0x30 + 8), q3 = R<float>(bp + (uint64_t)i*0x30 + 12);
-            float x = R<float>(bp + (uint64_t)i*0x30 + 0x10), y = R<float>(bp + (uint64_t)i*0x30 + 0x14), z = R<float>(bp + (uint64_t)i*0x30 + 0x18);
+            float q0 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE), q1 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 4);
+            float q2 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 8), q3 = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 12);
+            float x = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x10), y = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x14), z = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x18);
             fprintf(f, "    B%d t=(%.2f,%.2f,%.2f) q=(%.2f,%.2f,%.2f,%.2f)\n", i, x, y, z, q0, q1, q2, q3);
         }
         fprintf(f, "    ZRANGE %.1f..%.1f\n", minz, maxz);
@@ -585,18 +595,18 @@ static inline void QRot(float qx,float qy,float qz,float qw, float vx,float vy,f
 
 
 static bool LocalHead(uintptr_t pawn, float& ox, float& oy, float& oz) {
-    uintptr_t mesh = DPtr(R<uint64_t>(pawn + 0x3D0));
+    uintptr_t mesh = DPtr(R<uint64_t>(pawn + off::MESH));
     if (!ValidPtr(mesh)) return false;
-    uintptr_t bp = R<uintptr_t>(mesh + 0x760);
-    int32_t cnt = R<int32_t>(mesh + 0x760 + 8);
+    uintptr_t bp = R<uintptr_t>(mesh + off::BONES);
+    int32_t cnt = R<int32_t>(mesh + off::BONES + 8);
     if (!ValidPtr(bp) || cnt < 10 || cnt > 400) return false;
-    float qx = R<float>(mesh + 0x210), qy = R<float>(mesh + 0x214), qz = R<float>(mesh + 0x218), qw = R<float>(mesh + 0x21C);
-    float tx = R<float>(mesh + 0x220), ty = R<float>(mesh + 0x224), tz = R<float>(mesh + 0x228);
+    float qx = R<float>(mesh + off::COMPONENT_TW), qy = R<float>(mesh + off::COMPONENT_TW + 4), qz = R<float>(mesh + off::COMPONENT_TW + 8), qw = R<float>(mesh + off::COMPONENT_TW + 12);
+    float tx = R<float>(mesh + off::COMPONENT_TW + 0x10), ty = R<float>(mesh + off::COMPONENT_TW + 0x14), tz = R<float>(mesh + off::COMPONENT_TW + 0x18);
     float qn = qx*qx + qy*qy + qz*qz + qw*qw;
     if (!(qn > 0.8f && qn < 1.2f)) return false;
     float bestz = -1e9f; float bx = 0, by = 0, bz = 0;
     for (int i = 0; i < cnt && i < 400; ++i) {
-        float lx = R<float>(bp + (uint64_t)i*0x30 + 0x10), ly = R<float>(bp + (uint64_t)i*0x30 + 0x14), lz = R<float>(bp + (uint64_t)i*0x30 + 0x18);
+        float lx = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x10), ly = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x14), lz = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x18);
         if (!((lx==lx)&&(ly==ly)&&(lz==lz))) continue;
         float wx, wy, wz;
         QRot(qx,qy,qz,qw, lx,ly,lz, wx,wy,wz);
@@ -609,18 +619,18 @@ static bool LocalHead(uintptr_t pawn, float& ox, float& oy, float& oz) {
 
 static void FillBones(SPlayer& p, uintptr_t actor) {
     p.boneCount = 0;
-    uintptr_t mesh = DPtr(R<uint64_t>(actor + 0x3D0));
+    uintptr_t mesh = DPtr(R<uint64_t>(actor + off::MESH));
     if (!ValidPtr(mesh)) return;
-    uintptr_t bp = R<uintptr_t>(mesh + 0x760);
-    int32_t cnt = R<int32_t>(mesh + 0x760 + 8);
+    uintptr_t bp = R<uintptr_t>(mesh + off::BONES);
+    int32_t cnt = R<int32_t>(mesh + off::BONES + 8);
     if (!ValidPtr(bp) || cnt < 10 || cnt > 200) return;
-    float qx = R<float>(mesh + 0x210), qy = R<float>(mesh + 0x214), qz = R<float>(mesh + 0x218), qw = R<float>(mesh + 0x21C);
-    float tx = R<float>(mesh + 0x220), ty = R<float>(mesh + 0x224), tz = R<float>(mesh + 0x228);
+    float qx = R<float>(mesh + off::COMPONENT_TW), qy = R<float>(mesh + off::COMPONENT_TW + 4), qz = R<float>(mesh + off::COMPONENT_TW + 8), qw = R<float>(mesh + off::COMPONENT_TW + 12);
+    float tx = R<float>(mesh + off::COMPONENT_TW + 0x10), ty = R<float>(mesh + off::COMPONENT_TW + 0x14), tz = R<float>(mesh + off::COMPONENT_TW + 0x18);
     float qn = qx*qx + qy*qy + qz*qz + qw*qw;
     if (!(qn > 0.8f && qn < 1.2f)) return;
     int n = 0;
     for (int i = 0; i < cnt && i < 80; ++i) {
-        float lx = R<float>(bp + (uint64_t)i*0x30 + 0x10), ly = R<float>(bp + (uint64_t)i*0x30 + 0x14), lz = R<float>(bp + (uint64_t)i*0x30 + 0x18);
+        float lx = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x10), ly = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x14), lz = R<float>(bp + (uint64_t)i*off::BONE_STRIDE + 0x18);
         if (!((lx==lx)&&(ly==ly)&&(lz==lz))) continue;
         float wx, wy, wz;
         QRot(qx,qy,qz,qw, lx,ly,lz, wx,wy,wz);
@@ -648,7 +658,7 @@ static void DumpCam(uintptr_t pc, uintptr_t cam, uintptr_t pawn) {
     {
         uintptr_t tc = DPtr(R<uint64_t>(cam + 0x378));
         char tcn[104] = {0}; ClassNameToBuf(tc, tcn, 104);
-        float qx=R<float>(tc+0x210), qy=R<float>(tc+0x214), qz=R<float>(tc+0x218), qw=R<float>(tc+0x21C);
+        float qx=R<float>(tc+off::COMPONENT_TW), qy=R<float>(tc+off::COMPONENT_TW+4), qz=R<float>(tc+off::COMPONENT_TW+8), qw=R<float>(tc+off::COMPONENT_TW+12);
         float tx=R<float>(tc+0x220), ty=R<float>(tc+0x224), tz=R<float>(tc+0x228);
         fprintf(f, "CAMTC p=%p class=%s t=(%.1f,%.1f,%.1f) q=(%.3f,%.3f,%.3f,%.3f)\n",
                 (void*)tc, tcn, tx, ty, tz, qx, qy, qz, qw);
@@ -782,7 +792,7 @@ static void Refresh(SharedState& st) {
         }
         if (ValidPtr(localPawn)) {
             uintptr_t ps = DPtr(R<uint64_t>(localPawn + off::PLAYERSTATE));
-            if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + 0x660); st.localTeam = R<int32_t>(ps + 0x66C); st.selfDead = 0; }
+            if (ValidPtr(ps)) { st.localCamp = R<int32_t>(ps + off::CAMP_TRUE); st.localTeam = R<int32_t>(ps + 0x66C); st.selfDead = 0; }
             uintptr_t r0 = DPtr(R<uint64_t>(localPawn + off::ROOT_COMP));
             if (ValidPtr(r0)) {
                 SVec3 ctw = R<SVec3>(r0 + off::COMPONENT_TW + 0x10);
@@ -902,7 +912,7 @@ static void Refresh(SharedState& st) {
             SContains(cn, "MapRandom") || SContains(cn, "Pickup") || SContains(cn, "Item") || SContains(cn, "Default__")) continue;
         if (a == localPawn) continue;
         if (!posOK) {
-            uintptr_t m3 = DPtr(R<uint64_t>(a + 0x3D0));
+            uintptr_t m3 = DPtr(R<uint64_t>(a + off::MESH));
             if (ValidPtr(m3)) {
                 float mx = R<float>(m3 + 0x220), my = R<float>(m3 + 0x224), mz = R<float>(m3 + 0x228);
                 if (FiniteF(mx) && FiniteF(my) && FiniteF(mz)) {
@@ -931,7 +941,7 @@ static void Refresh(SharedState& st) {
             ReadFStringToBuf(ps + off::PLAYERNAME, p.name, 64);
             if (!p.name[0]) ReadFStringToBuf(ps + 0x488, p.name, 64);
             if (SContains(p.name, "BP_") || SContains(p.name, "PropertyReplication") || SContains(p.name, "Default__")) p.name[0] = 0;
-            p.camp = R<int32_t>(ps + 0x660);   // match team id (0 = local team)
+            p.camp = R<int32_t>(ps + off::CAMP_TRUE);   // match team id (0 = local team)
             p.team = R<int32_t>(ps + 0x66C);   // squad slot 1..4
             p.bot = 0;
         } else {
@@ -970,7 +980,7 @@ static void Refresh(SharedState& st) {
                     bool dup = false;
                     for (int k = 0; k < n; ++k) if (st.players[k].pawn == a) { dup = true; break; }
                     if (dup) continue;
-                    uintptr_t m3 = DPtr(R<uint64_t>(a + 0x3D0));
+                    uintptr_t m3 = DPtr(R<uint64_t>(a + off::MESH));
                     if (!ValidPtr(m3)) continue;
                     float mx = R<float>(m3 + 0x220), my = R<float>(m3 + 0x224), mz = R<float>(m3 + 0x228);
                     SVec3 pos{ mx, my, mz };
@@ -982,7 +992,7 @@ static void Refresh(SharedState& st) {
                         ReadFStringToBuf(ps + off::PLAYERNAME, p.name, 64);
                         if (!p.name[0]) ReadFStringToBuf(ps + 0x488, p.name, 64);
                         if (SContains(p.name, "BP_") || SContains(p.name, "PropertyReplication") || SContains(p.name, "Default__")) p.name[0] = 0;
-                        p.camp = R<int32_t>(ps + 0x660);
+                        p.camp = R<int32_t>(ps + off::CAMP_TRUE);
                         p.team = R<int32_t>(ps + 0x66C);
                     } else {
                         SCopy(p.name, 64, cn);

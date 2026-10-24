@@ -19,3 +19,12 @@ imgui/
 !dist/
 !dist/*.exe
 !dist/*.dll
+
+# runtime artifacts from injectors (generated)
+GAME_PID.txt
+inj30.log
+inj_sys.log
+inj_early.log
+
+# local scratch (archived untracked probes)
+_scratch/
