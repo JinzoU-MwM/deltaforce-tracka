@@ -16,6 +16,7 @@ Repo private. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, b
 | `watch_inject.bat` | watcher SYSTEM: tunggu proses game → inject core30 |
 | `injsys.bat`, `inj30.bat` | injector satu kali (SYSTEM) |
 | `setup_imgui.ps1` | clone Dear ImGui ke `imgui/` (dibutuhkan build) |
+| `docs/ESP-BEST-PRACTICES.md` | riset ESP optimal — POV/proyeksi, overlay swapchain, data pipeline, anti-cheat |
 | `docs/INJECTION.md` | troubleshooting `NtMapViewOfSection 0xC0000022` — token/timing, watcher SYSTEM, checklist |
 | `docs/HANDOFF-history-core11.md` | handoff lama (core11, riset offset awal) |
 | `dist/` | build output (dibuat dari `build30.bat`; tidak selalu di-commit) |
