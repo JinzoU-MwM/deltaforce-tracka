@@ -1,6 +1,6 @@
 # ANTI-RECOIL RESEARCH — Delta Force (UE5 + ACE)
 
-> Snapshot kode: `2afc9ab` (core30 + overlay ImGui v31). Riset ini fokus pada mekanisme recoil, sumber data/offset, metode kompensasi, dan best practice stealth. Bukan implementasi — semua poin menunjuk file/fungsi/offset nyata atau sumber publik.
+> Snapshot kode: `5bc33ee` (core30 + overlay ImGui v31; `5bc33ee` = aim tidak selalu nyala + target body part + geometri client-rect). Temuan anti-recoil diverifikasi ulang di HEAD ini. Riset ini fokus pada mekanisme recoil, sumber data/offset, metode kompensasi, dan best practice stealth. Bukan implementasi — semua poin menunjuk file/fungsi/offset nyata atau sumber publik.
 
 ---
 
@@ -114,7 +114,7 @@ Nama kelas yang dicari di `dfscan`/`dfdump`: `Weapon`, `WeaponData`, `Recoil`, `
 - `Sleep(8)` per tick.
 
 `overlay_imgui.cpp` — `AimTick()`:
-- Target = player terdekat crosshair dalam `g_aimFov` (px), head bone 32.
+- Target = player terdekat crosshair dalam `g_aimFov` (px), body part (5bc33ee; sebelumnya head bone 32).
 - Filter team/maxDist; `lastSwitch` 120 ms; tulis `AimCmd` absolute yaw/pitch; `mode=0`.
 - **Tidak ada kompensasi recoil** — saat firing, `ControlRotation` naik, crosshair/target bergeser; aim hanya mengejar head.
 
