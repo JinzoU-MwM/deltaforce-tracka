@@ -299,3 +299,33 @@ weapon=... data=...
 
 Guard robust yang dipasang (mencegah "asal jalan"):
 `sstate==1 && camValid && !selfDead && !menu_open && game_foreground && (!fireOnly || firing)`, clamp laju, proteksi NaN, dan reset state saat trigger dilepas.
+
+---
+
+## 10. REVERT (2026-10-24) — anti-recoil dilepas
+
+Atas keputusan operator, implementasi anti-recoil **dibuang dari overlay** karena **aim assist sudah menutupi kebutuhan**:
+
+- Dihapus: blok recoil di `AimTick`, state `g_rec*` (enable/fireOnly/V/H/auto/learned), section "No recoil" di tab AIM, dan key `rec*` di `overlay_cfg.txt`.
+- Bukti bersih: `grep -c "recOn\|recDP\|g_rec" overlay_imgui.cpp` → **0**; baris `JIT` baru tidak lagi memuat `rec=`.
+- Tetap dipertahankan (tidak terkait fitur): `WriteMem` fast-path tanpa `VirtualProtect`, hotkey tanpa `WH_KEYBOARD_LL`, dan ramp/jitter aim yang sudah ada.
+
+Yang **masih berguna** dari riset ini dan tetap ada di repo:
+
+| Artefak | Fungsi |
+|---|---|
+| `dfrec.cpp` + `build_rec.bat` | probe read-only: delta `ControlRotation` per shot, `SHOT n`, scan kandidat weapon (`Weapon/Recoil/Spread/Ammo/Fire/Inventory`) |
+| `scripts/analyze_rec.py` | ranking otomatis kandidat offset: AMMO (turun 1 + reset reload), SHOT INDEX, FIRE TIMER, RECOIL |
+
+Temuan probe yang sudah tercatat (build 1.14.0.772, live):
+
+```
+pawn+0xD30  -> BP_WeaponModular_C
+pawn+0x1088 -> WeaponAppearanceProxy  (0x10D8 saat dump)
+pawn+0x1788 -> BP_WeaponModular_C     (objek senjata aktif)
+WFLT objek aktif: 0xD8=1.0  0xDC≈879.8 (rpm?)  0x150=100  0x154=2  0x158=1
+```
+
+Watcher `CHG` pada rentang `0x0..0x600` menghasilkan **0 perubahan** saat menembak → stat recoil/ammo **tidak** berada di rentang itu pada objek tersebut (kemungkinan di komponen/asset terpisah, atau objek senjata runtime berbeda). Kalau fitur ini dihidupkan lagi, langkah pertama = perluas watcher (`0x0..0x2000`, dua level pointer) dan jalankan `analyze_rec.py`.
+
+Kesimpulan teknis untuk masa depan: kompensasi paling aman tetap **input-level** (`RotationInput`), bukan tulis game-data; dan **jangan** memakai macro eksternal (daftar larangan Garena, §1.2).

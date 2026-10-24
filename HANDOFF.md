@@ -306,3 +306,38 @@ aim.log  : AIM tgt=.. cur=(pitch,yaw) want=(pitch,yaw) d=(0,0)
 - V23–V26: AimCmd absolute, MenuCfg, hotkey via core, keytest.
 - V27–V29: aim stealth (ROTATION_INPUT), FOV circle, prediksi overlay, publish 10ms.
 - V30: fix player scan mode match (semua level + Character/Pawn + PS opsional), overlay multi scan V22–V30, DrawESP pakai `g_draw`, FOV circle selalu, team filter off, maxDist 1000, draw counter.
+
+---
+
+## 13. Status terkini — 2026-10-24 (core32 / shm V31 / overlay v31.4)
+
+Bagian 0–12 di atas adalah riwayat core30/V30. Kondisi yang berjalan sekarang:
+
+| Komponen | Nilai |
+|---|---|
+| Core aktif | `dfcore32.dll` (dibangun `/DSHM_V31`), di-inject SYSTEM; `dfcore30.dll` masih hidup tapi diabaikan |
+| shm | **V31** (`kShmName` byte 0x85). Overlay scan `kName22..kName31`, terima `version <= 31`, prefer tertinggi |
+| Overlay | `dfimgui_overlay_v31.exe` — 5 tab (ESP/AIM/CAMERA/SETTINGS/INFO), `overlay_cfg.txt` auto-load |
+| Kamera | `camMode` dipisah: **11..15** = kandidat POV CameraManager, **16** = auto-scan, **2** = fallback (`controlRot + selfPos.z+65`, fov 90) |
+| Menu | INSERT / Ctrl+Alt+M → `ToggleMenu()` ber-debounce 300 ms (keyEdges core + polling lokal + `menu.flag`); `tab.txt` dan `startTab` untuk memilih tab |
+| Geometri | `GetClientRect` + `ClientToScreen` game window (dicari **via PID**, bukan judul); W2S, FOV circle, pusat aim ikut client rect |
+| Hotkey | **tanpa** `WH_KEYBOARD_LL` (vektor deteksi); polling `GetAsyncKeyState` |
+| Aim | target body part: Auto(32>5>3), Head(32), Neck(5), Chest(3), Pelvis(1), Leg L(58), Leg R(62); `RotationInput` |
+| Anti-recoil | **di-revert** (aim assist sudah cukup) — lihat `docs/ANTI-RECOIL-RESEARCH.md` §10 |
+| Probe | `dfrec.dll` (read-only) + `scripts/analyze_rec.py` untuk riset senjata/recoil |
+
+### Bukti sesi live (core32)
+```
+shm v31 state=1 players=6
+DRAW ply=6 drawn=710 off=142 hold=0 miss=0
+JIT  drot=0.65..1.90deg dloc=1.4..8.3 mode=2 reject=0 client=1920x1080+0+0
+```
+`hold=0` (dulu 40–55) dan `miss=0` → flap state hilang di sumber (GetWorld retry+cache, gate nama level, `selfPos` dihitung sebelum pemilihan kamera).
+
+### Terbuka
+1. **POV render asli belum ketemu** — `mode=2` masih fallback, jadi ViewPunch/shake/ADS tidak ikut proyeksi. Perlu auto-scan `cam+0x0..0x40000` (skor `|loc−head| + angle(rot, controlRot)`) atau probe `dfcam4`.
+2. Swapchain/DirectComposition untuk overlay (masih `UpdateLayeredWindow` full-frame; alpha loop sudah dibuang, pacing `DwmFlush`).
+3. Interpolasi posisi player 25 Hz → 110 fps.
+4. Stat senjata: watcher `0x0..0x600` pada `BP_WeaponModular_C` = 0 perubahan; perluas ke `0x0..0x2000` + dua level pointer.
+
+Dokumen riset: `docs/ESP-BEST-PRACTICES.md`, `docs/ESP-JITTER-BLINK-RESEARCH.md`, `docs/ANTI-RECOIL-RESEARCH.md`, `docs/INJECTION.md`.

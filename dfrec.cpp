@@ -113,6 +113,14 @@ static uintptr_t GetWorld() {
 }
 
 struct Rot { float pitch, yaw, roll; };
+struct SVec3 { float x, y, z; };
+
+static double NowSec() {
+    static LARGE_INTEGER f{}; static bool init = false;
+    if (!init) { QueryPerformanceFrequency(&f); init = true; }
+    LARGE_INTEGER c; QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)f.QuadPart;
+}
 
 static void DumpCandidates(uintptr_t pawn) {
     L("# CAND pawn=%p scan 0x100..0x1B00", (void*)pawn);
@@ -174,21 +182,25 @@ static uintptr_t g_snapObj = 0;
 static DWORD g_chgT[WATCH_MAX / 4];
 
 static void WatchTick(uintptr_t obj, bool firing) {
+    (void)firing;
     if (!ValidPtr(obj)) return;
     if (obj != g_snapObj) {
         g_snapObj = obj;
         ReadMem(g_snapA, obj, WATCH_MAX);
         return;
     }
-    if (!ReadMem(g_snapB, obj, WATCH_MAX)) return;
-    if (firing) {
+    bool okAll = true;
+    for (uint32_t c = 0; c < WATCH_MAX; c += 0x100)
+        if (!ReadMem(g_snapB + c, obj + c, 0x100)) okAll = false;
+    if (!okAll) { g_snapObj = 0; return; }
+    {
         for (uint32_t off = 0; off + 4 <= WATCH_MAX; off += 4) {
             int32_t ov, nv; float of, nf;
             MMove(&ov, g_snapA + off, 4); MMove(&nv, g_snapB + off, 4);
             MMove(&of, g_snapA + off, 4); MMove(&nf, g_snapB + off, 4);
             if (ov == nv) continue;
             DWORD now = GetTickCount();
-            if (now - g_chgT[off / 4] < 90) continue;   // dedupe
+            if (now - g_chgT[off / 4] < 400) continue;   // dedupe
             g_chgT[off / 4] = now;
             bool intLike = (ov > -100000 && ov < 100000);
             bool fltLike = (of == of && nf == nf && fabsf(of) < 1e6f && fabsf(nf) < 1e6f);
@@ -225,15 +237,25 @@ static DWORD WINAPI Worker(LPVOID) {
             Rot ctrl = R<Rot>(pc + DF::UPlayerController_::ControlRotation);
             Rot in = R<Rot>(pc + DF::UPlayerController_::RotationInput);
             DWORD now = GetTickCount();
-            float dt = (now - prevT) / 1000.f;
+            static double prevS = NowSec();
+            double nowS2 = NowSec();
+            float dt = (float)(nowS2 - prevS);
+            prevS = nowS2;
             bool lmb = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
 
             if (lmb && !lmbPrev) { ++shot; L("SHOT %d ctrl=(%.3f,%.3f)", shot, ctrl.pitch, ctrl.yaw); }
-            if (lmb) {
-                float dp = ctrl.pitch - prevCtrl.pitch, dy = ctrl.yaw - prevCtrl.yaw;
+            static double lastStat = 0;
+            static Rot anchor{};
+            double nowS = NowSec();
+            if (nowS - lastStat >= 0.25) {
+                // delta terhadap anchor 250 ms (bukan tick 8 ms) supaya climb recoil terlihat
+                float dp = ctrl.pitch - anchor.pitch, dy = ctrl.yaw - anchor.yaw;
                 while (dy > 180.f) dy -= 360.f; while (dy < -180.f) dy += 360.f;
-                L("R dt=%.4f ctrl=(%.3f,%.3f) d=(%.3f,%.3f) in=(%.3f,%.3f) lmb=1",
-                  dt, ctrl.pitch, ctrl.yaw, dp, dy, in.pitch, in.yaw);
+                SVec3 sp = ValidPtr(pawn) ? R<SVec3>(DPtr(R<uint64_t>(pawn + DF::AActor_::RootComponent)) + DF::USceneComponent_::RelativeLocation) : SVec3{};
+                L("T dt=%.3f ctrl=(%.3f,%.3f) d=(%.3f,%.3f) in=(%.3f,%.3f) lmb=%d self=(%.0f,%.0f,%.0f)",
+                  dt, ctrl.pitch, ctrl.yaw, dp, dy, in.pitch, in.yaw, lmb ? 1 : 0, sp.x, sp.y, sp.z);
+                anchor = ctrl;
+                lastStat = nowS;
             }
             prevCtrl = ctrl; prevIn = in; prevT = now; lmbPrev = lmb;
 

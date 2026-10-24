@@ -7,11 +7,13 @@ Repo private. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, b
 
 | Path | Isi |
 |---|---|
-| `core.cpp` | core30 DLL (in-game): scan semua level, publish shm V30 tiap 10ms, AimLoop `ROTATION_INPUT`, PollKeys, EnsureOverlay |
-| `shared.h` | SharedState/SPlayer/AimCmd/MenuCfg + nama shm V22–V30 |
-| `overlay_imgui.cpp` | overlay multi V22–V30: ESP, skeleton, FOV circle, prediksi `g_draw`, ADS FOV, AimCmd, menu |
+| `core.cpp` | core DLL (in-game): scan semua level, publish shm (V30/V31 via `/DSHM_Vxx`), kamera POV 11..16 / fallback 2, AimLoop `ROTATION_INPUT`, PollKeys, EnsureOverlay |
+| `shared.h` | SharedState/SPlayer/AimCmd/MenuCfg + nama shm V22–**V31** (`SHM_VERSION` ikut define) |
+| `overlay_imgui.cpp` | overlay multi V22–V31: 5 tab (ESP/AIM/CAMERA/SETTINGS/INFO), ESP+skeleton, FOV circle, target body part, client-rect W2S, `overlay_cfg.txt` |
 | `Offsets.hpp` | **single source of truth** offset (UEOffsets + `namespace DF`; core pakai `DF::`) |
 | `build30.bat` | build core30 + overlay multi (MSVC) |
+| `dfrec.cpp`, `build_rec.bat` | probe read-only: delta `ControlRotation` per shot + scan kandidat weapon/recoil |
+| `scripts/analyze_rec.py` | analisa `rec*.log` → ranking kandidat offset AMMO / SHOT INDEX / FIRE TIMER / RECOIL |
 | `StartOverlay.bat` | kill overlay → copy `dfimgui_overlay_multi.exe` → start |
 | `watch_inject.bat` | watcher SYSTEM: tunggu proses game → inject core30 |
 | `injsys.bat`, `inj30.bat` | injector satu kali (SYSTEM) |
