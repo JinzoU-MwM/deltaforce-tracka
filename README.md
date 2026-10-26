@@ -1,4 +1,4 @@
-# Delta Force Track A — ESP + Aim (private)
+# Delta Force Track A — ESP + Aim
 
 Riset dan implementasi ESP/aim untuk `DeltaForceClient-Win64-Shipping.exe` **1.14.0.772**.
 Repo public. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, build, deploy, anti-cheat, dan known issues.
