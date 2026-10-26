@@ -1,7 +1,7 @@
 # Delta Force Track A — ESP + Aim (private)
 
 Riset dan implementasi ESP/aim untuk `DeltaForceClient-Win64-Shipping.exe` **1.14.0.772**.
-Repo private. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, build, deploy, anti-cheat, dan known issues.
+Repo public. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, build, deploy, anti-cheat, dan known issues.
 
 ## Isi repo
 
@@ -12,18 +12,20 @@ Repo private. Baca **[HANDOFF.md](HANDOFF.md)** untuk arsitektur, offset, shm, b
 | `overlay_imgui.cpp` | overlay multi V22–V31: 5 tab (ESP/AIM/CAMERA/SETTINGS/INFO), ESP+skeleton, FOV circle, target body part, client-rect W2S, `overlay_cfg.txt` |
 | `Offsets.hpp` | **single source of truth** offset (UEOffsets + `namespace DF`; core pakai `DF::`) |
 | `build30.bat` | build core30 + overlay multi (MSVC) |
-| `dfrec.cpp`, `build_rec.bat` | probe read-only: delta `ControlRotation` per shot + scan kandidat weapon/recoil |
-| `scripts/analyze_rec.py` | analisa `rec*.log` → ranking kandidat offset AMMO / SHOT INDEX / FIRE TIMER / RECOIL |
 | `StartOverlay.bat` | kill overlay → copy `dfimgui_overlay_multi.exe` → start |
 | `watch_inject.bat` | watcher SYSTEM: tunggu proses game → inject core30 |
-| `injsys.bat`, `inj30.bat` | injector satu kali (SYSTEM) |
+| `injsys.bat` | injector satu kali (SYSTEM) |
 | `setup_imgui.ps1` | clone Dear ImGui ke `imgui/` (dibutuhkan build) |
 | `docs/ESP-JITTER-BLINK-RESEARCH.md` | riset jitter/blink ESP — camera cache vs render POV, ViewPunch, box/bones, snapshot, render path |
 | `docs/ANTI-RECOIL-RESEARCH.md` | riset anti-recoil — actual/visual/spread, RotationInput, pola per-senjata, probe dfrec, stealth |
 | `docs/ESP-BEST-PRACTICES.md` | riset ESP optimal — POV/proyeksi, overlay swapchain, data pipeline, anti-cheat |
 | `docs/INJECTION.md` | troubleshooting `NtMapViewOfSection 0xC0000022` — token/timing, watcher SYSTEM, checklist |
 | `docs/HANDOFF-history-core11.md` | handoff lama (core11, riset offset awal) |
+| `dfsecinject.cpp`, `inject.cpp`, `sessrun.cpp` | injector/launcher (SYSTEM + session 1) |
+| `shot.cpp`, `restart_helper.cpp`, `gamestart.cpp` | capture gambar, restart helper, start game |
 | `dist/` | build output (dibuat dari `build30.bat`; tidak selalu di-commit) |
+
+File test/probe, build lama, log, dan screenshot **tidak di-commit** (lihat `.gitignore`).
 
 ## Quickstart
 
@@ -54,4 +56,4 @@ Hotkey: **INSERT** atau **Ctrl+Alt+M** (dibaca core → shm `keyEdges`). Fallbac
 
 ## Warning
 
-Private research. Anti-cheat dapat mendeteksi injeksi/memory write; tidak ada jaminan undetected. Gunakan di lingkungan uji/terotorisasi.
+Research. Anti-cheat dapat mendeteksi injeksi/memory write; tidak ada jaminan undetected. Gunakan di lingkungan uji/terotorisasi.
